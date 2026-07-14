@@ -1,0 +1,22 @@
+{
+  "short_name": "Malerprofis",
+  "name": "Malerprofis Uderstadt",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/logo.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#fefefe",
+  "theme_color": "#3981b7",
+  "display": "standalone",
+  "orientation": "portrait"
+}

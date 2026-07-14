@@ -1,0 +1,16 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Schützt die PWA-Icons vor dem Überschreiben durch KI-Syncs
+public/apple-touch-icon.png
+public/icon-192x192.png
+public/icon-512x512.png
+public/logo.png
+.antigravity/
+metadata.json
