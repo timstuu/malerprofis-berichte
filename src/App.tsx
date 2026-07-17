@@ -123,7 +123,7 @@ interface WeeklyEntry {
 
 // Logo component replacement using the png file
 function Logo({ className }: { className?: string }) {
-  return <img src={`${import.meta.env.BASE_URL}logo.png?v=1.0.8`} alt="Malerprofis Uderstadt Logo" className={className} />;
+  return <img src={`${import.meta.env.BASE_URL}logo.png?v=1.0.9`} alt="Malerprofis Uderstadt Logo" className={className} />;
 }
 
 const DEFAULT_PROJECTS = [
@@ -258,13 +258,13 @@ export default function App() {
   });
 
   const [weeklyBreaks, setWeeklyBreaks] = useState<Record<string, number>>({
-    Montag: 0,
-    Dienstag: 0,
-    Mittwoch: 0,
-    Donnerstag: 0,
-    Freitag: 0,
-    Samstag: 0,
-    Sonntag: 0,
+    Montag: 60,
+    Dienstag: 60,
+    Mittwoch: 60,
+    Donnerstag: 60,
+    Freitag: 60,
+    Samstag: 60,
+    Sonntag: 60,
   });
 
   const handleDecreaseBreak = (day: string) => {
@@ -467,7 +467,7 @@ export default function App() {
     try {
       const img = new Image();
       const baseUrl = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-      img.src = `${window.location.origin}${baseUrl}logo.png?v=1.0.8`;
+      img.src = `${window.location.origin}${baseUrl}logo.png?v=1.0.9`;
       await new Promise((resolve, reject) => {
         img.onload = resolve;
         img.onerror = reject;
@@ -724,13 +724,21 @@ export default function App() {
       Sonntag: { entries: [] },
     });
     setWeeklyBreaks({
-      Montag: 0,
-      Dienstag: 0,
-      Mittwoch: 0,
-      Donnerstag: 0,
-      Freitag: 0,
-      Samstag: 0,
-      Sonntag: 0,
+      Montag: 60,
+      Dienstag: 60,
+      Mittwoch: 60,
+      Donnerstag: 60,
+      Freitag: 60,
+      Samstag: 60,
+      Sonntag: 60,
+    });
+
+    const days = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
+    days.forEach(day => {
+      const startInput = document.getElementById(`start-${day}`) as HTMLInputElement;
+      const endInput = document.getElementById(`end-${day}`) as HTMLInputElement;
+      if (startInput) startInput.value = '07:00';
+      if (endInput) endInput.value = '16:30';
     });
   };
 
@@ -1315,11 +1323,11 @@ export default function App() {
                         <div className="flex gap-2">
                           <div className="flex-1">
                             <label className="text-[11px] font-semibold text-[#141414]/40 uppercase tracking-wider block mb-1">Startzeit</label>
-                            <input type="time" id={`start-${day}`} className="w-full p-3 bg-gray-100 rounded-xl border-none text-sm outline-none" />
+                            <input type="time" id={`start-${day}`} defaultValue="07:00" className="w-full p-3 bg-gray-100 rounded-xl border-none text-sm outline-none" />
                           </div>
                           <div className="flex-1">
                             <label className="text-[11px] font-semibold text-[#141414]/40 uppercase tracking-wider block mb-1">Endzeit</label>
-                            <input type="time" id={`end-${day}`} className="w-full p-3 bg-gray-100 rounded-xl border-none text-sm outline-none" />
+                            <input type="time" id={`end-${day}`} defaultValue="16:30" className="w-full p-3 bg-gray-100 rounded-xl border-none text-sm outline-none" />
                           </div>
                         </div>
 
@@ -1421,8 +1429,8 @@ export default function App() {
                           (document.getElementById(`proj-${day}`) as HTMLInputElement).value = '';
                           (document.getElementById(`num-${day}`) as HTMLInputElement).value = '';
                           (document.getElementById(`desc-${day}`) as HTMLInputElement).value = '';
-                          (document.getElementById(`start-${day}`) as HTMLInputElement).value = '';
-                          (document.getElementById(`end-${day}`) as HTMLInputElement).value = '';
+                          (document.getElementById(`start-${day}`) as HTMLInputElement).value = '07:00';
+                          (document.getElementById(`end-${day}`) as HTMLInputElement).value = '16:30';
                           
                           setWeeklyBreaks(prev => ({ ...prev, [day]: 0 }));
                         }} className="w-full bg-brand-accent2 text-white p-2 rounded-xl font-bold hover:bg-brand-accent2/90 cursor-pointer">Baustelle hinzufügen</button>
@@ -2091,7 +2099,7 @@ export default function App() {
                   <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div className="space-y-1">
                       <p className="text-sm font-bold text-gray-900">Malerprofis Uderstadt</p>
-                      <p className="text-xs text-[#141414]/50">Version 1.0.8 (Build 2026.07.17)</p>
+                      <p className="text-xs text-[#141414]/50">Version 1.0.9 (Build 2026.07.17)</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
