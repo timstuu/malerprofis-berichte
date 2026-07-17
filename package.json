@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepare": "git update-index --skip-worktree public/logo.png public/apple-touch-icon.png public/icon-192x192.png public/icon-512x512.png || true"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
