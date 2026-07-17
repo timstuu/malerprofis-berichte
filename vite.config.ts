@@ -7,7 +7,7 @@ import {VitePWA} from 'vite-plugin-pwa';
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
-    base: mode === 'production' ? '/malerprofis/' : '/',
+    base: mode === 'production' ? '/malerprofis-berichte/' : '/',
     plugins: [
       react(),
       tailwindcss(),
