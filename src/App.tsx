@@ -12,6 +12,7 @@ import {
   subWeeks,
   addMonths,
   subMonths,
+  getISOWeek,
 } from 'date-fns';
 import { 
   LayoutDashboard, 
@@ -122,7 +123,7 @@ interface WeeklyEntry {
 
 // Logo component replacement using the png file
 function Logo({ className }: { className?: string }) {
-  return <img src={`${import.meta.env.BASE_URL}logo.png?v=1.0.6`} alt="Malerprofis Uderstadt Logo" className={className} />;
+  return <img src={`${import.meta.env.BASE_URL}logo.png?v=1.0.8`} alt="Malerprofis Uderstadt Logo" className={className} />;
 }
 
 const DEFAULT_PROJECTS = [
@@ -466,7 +467,7 @@ export default function App() {
     try {
       const img = new Image();
       const baseUrl = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-      img.src = `${window.location.origin}${baseUrl}logo.png?v=1.0.6`;
+      img.src = `${window.location.origin}${baseUrl}logo.png?v=1.0.8`;
       await new Promise((resolve, reject) => {
         img.onload = resolve;
         img.onerror = reject;
@@ -652,12 +653,57 @@ export default function App() {
     }
 
     const blob = await generatePDFBlob(type, signatures);
-    const reader = new FileReader();
-    reader.readAsDataURL(blob);
-    reader.onloadend = () => {
-      const base64data = reader.result;
-      window.location.href = `mailto:?subject=${type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll'}&body=Anbei der Bericht.&attachment=${base64data}`;
+    
+    const name = `${userName.firstName} ${userName.lastName}`;
+    let subject = '';
+    let body = '';
+    let filename = '';
+
+    if (type === 'wochenbericht') {
+      const kw = getISOWeek(selectedWeek);
+      const dateRange = `${format(selectedWeek, 'dd.MM.')}-${format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}`;
+      subject = `Wochenbericht KW ${kw} ${name} ${dateRange}`;
+      body = `Moin,\nanbei mein Wochenbericht für die KW ${kw}.\n\nBeste Grüße,\n${name}`;
+      filename = `Wochenbericht_KW${kw}_${userName.firstName}_${userName.lastName}.pdf`;
+    } else {
+      const projNum = abnahme.number;
+      subject = `Abnahmeprotokoll ${name} ${projNum}`;
+      body = `Moin,\nanbei das Abnahmeprotokoll für das Projekt ${projNum}.\n\nBeste Grüße,\n${name}`;
+      filename = `Abnahmeprotokoll_${projNum}_${userName.firstName}_${userName.lastName}.pdf`;
+    }
+
+    const file = new File([blob], filename, { type: 'application/pdf' });
+
+    const fallbackMailTo = (pdfBlob: Blob, pdfFilename: string, emailSubject: string, emailBody: string) => {
+      const url = URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = pdfFilename;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      alert("Direktes Teilen von Dateien wird auf diesem Gerät/Browser nicht unterstützt.\n\nDer Bericht wurde heruntergeladen. Bitte hänge die Datei manuell an die E-Mail an, die sich jetzt öffnet.");
+
+      window.location.href = `mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
     };
+
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+          title: subject,
+          text: body,
+        });
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.error('Share failed:', err);
+          fallbackMailTo(blob, filename, subject, body);
+        }
+      }
+    } else {
+      fallbackMailTo(blob, filename, subject, body);
+    }
+
     addReportToHistory(
       type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll', 
       'versendet',
@@ -851,33 +897,33 @@ export default function App() {
   return (
     <div className="min-h-screen bg-brand-bg text-[#141414] font-sans">
       {/* Sidebar / Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#141414]/10 px-6 py-2 md:top-0 md:bottom-auto md:h-screen md:w-64 md:border-t-0 md:border-r flex md:flex-col z-50">
-        <div className="hidden md:flex items-center justify-center py-6 px-4">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#141414]/10 px-6 py-2 lg:top-0 lg:bottom-auto lg:h-screen lg:w-64 lg:border-t-0 lg:border-r flex lg:flex-col z-50">
+        <div className="hidden lg:flex items-center justify-center py-6 px-4">
           <Logo className="w-48 h-auto" />
         </div>
 
-        <div className="flex flex-1 justify-around md:flex-col md:justify-start md:gap-2">
+        <div className="flex flex-1 justify-around lg:flex-col lg:justify-start lg:gap-2">
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id as any)}
               className={cn(
-                "flex flex-col md:flex-row items-center gap-1 md:gap-3 p-2 md:px-4 md:py-3 rounded-xl transition-all",
+                "flex flex-col lg:flex-row items-center gap-1 lg:gap-3 p-2 lg:px-4 lg:py-3 rounded-xl transition-all",
                 activeTab === item.id 
-                  ? "text-brand-accent1 md:bg-brand-accent1/10 font-medium" 
+                  ? "text-brand-accent1 lg:bg-brand-accent1/10 font-medium" 
                   : "text-[#141414]/50 hover:text-[#141414]"
               )}
             >
               <item.icon size={20} />
-              <span className="text-[10px] md:text-sm">{item.label}</span>
+              <span className="text-[10px] lg:text-sm">{item.label}</span>
             </button>
           ))}
         </div>
       </nav>
 
       {/* Main Content */}
-      <main className="pb-24 md:pb-0 md:pl-64 min-h-screen">
-        <header className="sticky top-0 bg-gray-100/80 backdrop-blur-md z-40 px-6 py-3 flex items-center justify-between md:hidden">
+      <main className="pb-24 lg:pb-0 lg:pl-64 min-h-screen">
+        <header className="sticky top-0 bg-gray-100/80 backdrop-blur-md z-40 px-6 py-3 flex items-center justify-between lg:hidden">
           <Logo className="w-36 h-auto" />
           <div className="w-8 h-8 bg-[#E4E3E0] rounded-full flex items-center justify-center text-xs font-bold">
             {currentUser?.first_name[0]}
@@ -1159,7 +1205,7 @@ export default function App() {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-6"
               >
-                <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 mb-6 space-y-4">
+                <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 mb-6">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <h2 className="text-2xl font-bold">Wochenbericht</h2>
                     <div className="flex items-center gap-2 self-start sm:self-auto">
@@ -1167,10 +1213,6 @@ export default function App() {
                         <span className="font-medium text-sm sm:text-base">{format(selectedWeek, 'dd.MM.')} - {format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}</span>
                         <button onClick={() => setSelectedWeek(addWeeks(selectedWeek, 1))} className="p-2 rounded-xl bg-gray-100 cursor-pointer hover:bg-gray-200 transition-colors">&gt;</button>
                     </div>
-                  </div>
-                  <div className="flex flex-col md:flex-row md:items-center justify-between">
-                    <p className="text-sm text-[#141414]/50">Gesamtwochenstunden</p>
-                    <p className="text-3xl font-bold text-brand-accent2">{getWeeklyTotal()} Std.</p>
                   </div>
                 </div>
 
@@ -1388,6 +1430,12 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+                
+                <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-6">
+                  <p className="text-sm font-medium text-[#141414]/50">Gesamtwochenstunden</p>
+                  <p className="text-3xl font-bold text-brand-accent2">{getWeeklyTotal()} Std.</p>
+                </div>
+
                 <div className="flex flex-col sm:flex-row gap-3 pt-6 w-full">
                   <button onClick={handleResetWeeklyReport} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Abbrechen</button>
                   <button onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('saveW'); }} className="w-full sm:flex-1 bg-brand-accent2 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent2/90 transition-colors cursor-pointer text-center">Wochenbericht speichern</button>
@@ -2043,7 +2091,7 @@ export default function App() {
                   <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div className="space-y-1">
                       <p className="text-sm font-bold text-gray-900">Malerprofis Uderstadt</p>
-                      <p className="text-xs text-[#141414]/50">Version 1.0.6 (Build 2026.07.17)</p>
+                      <p className="text-xs text-[#141414]/50">Version 1.0.8 (Build 2026.07.17)</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
