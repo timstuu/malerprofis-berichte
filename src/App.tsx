@@ -107,7 +107,7 @@ interface Report {
 
 interface ReportHistory {
   date: string;
-  type: 'Wochenbericht' | 'Abnahmeprotokoll';
+  type: 'Wochenbericht' | 'Abnahmeprotokoll' | 'Urlaubsantrag';
   action: 'gespeichert' | 'versendet';
   detail: string;
 }
@@ -123,7 +123,7 @@ interface WeeklyEntry {
 
 // Logo component replacement using the png file
 function Logo({ className }: { className?: string }) {
-  return <img src={`${import.meta.env.BASE_URL}logo.png?v=1.0.9`} alt="Malerprofis Uderstadt Logo" className={className} />;
+  return <img src={`${import.meta.env.BASE_URL}logo.png?v=1.1.0`} alt="Malerprofis Uderstadt Logo" className={className} />;
 }
 
 const DEFAULT_PROJECTS = [
@@ -283,6 +283,95 @@ export default function App() {
       if (current === 30) return { ...prev, [day]: 60 };
       return prev;
     });
+  };
+
+  const [yearlyLeaveDays, setYearlyLeaveDays] = useState<number>(() => {
+    const stored = localStorage.getItem('yearlyLeaveDays');
+    return stored ? parseInt(stored, 10) : 30;
+  });
+  const [selectedLeaveDates, setSelectedLeaveDates] = useState<string[]>([]);
+  const [leaveCalendarMonth, setLeaveCalendarMonth] = useState<Date>(new Date());
+  const [isLeavePreview, setIsLeavePreview] = useState<boolean>(false);
+
+  const countWeekdays = (start: Date | string, end: Date | string) => {
+    const s = new Date(start);
+    const e = new Date(end);
+    let count = 0;
+    let curr = new Date(s);
+    while (curr <= e) {
+      const day = curr.getDay();
+      if (day !== 0 && day !== 6) {
+        count++;
+      }
+      curr.setDate(curr.getDate() + 1);
+    }
+    return count;
+  };
+
+  const getTakenLeaveDays = () => {
+    return leaveRequests
+      .filter(req => req.employee_id === currentUser?.id && req.status === 'approved' && req.type === 'vacation')
+      .reduce((sum, req) => sum + countWeekdays(req.start_date, req.end_date), 0);
+  };
+
+  const getContinuousPeriods = (dates: Date[]) => {
+    if (dates.length === 0) return [];
+    const sorted = [...dates].sort((a, b) => a.getTime() - b.getTime());
+    const periods: { start: Date; end: Date }[] = [];
+    
+    let currentStart = sorted[0];
+    let currentEnd = sorted[0];
+    
+    for (let i = 1; i < sorted.length; i++) {
+      const diffTime = sorted[i].getTime() - currentEnd.getTime();
+      const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays <= 3) {
+        currentEnd = sorted[i];
+      } else {
+        periods.push({ start: currentStart, end: currentEnd });
+        currentStart = sorted[i];
+        currentEnd = sorted[i];
+      }
+    }
+    periods.push({ start: currentStart, end: currentEnd });
+    return periods;
+  };
+
+  const toggleLeaveDate = (date: Date) => {
+    const day = date.getDay();
+    if (day === 0 || day === 6) return;
+    
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const alreadyRequested = leaveRequests.some(req => {
+      if (req.employee_id !== currentUser?.id || req.status === 'rejected') return false;
+      return dateStr >= req.start_date && dateStr <= req.end_date;
+    });
+    if (alreadyRequested) return;
+
+    setSelectedLeaveDates(prev => {
+      if (prev.includes(dateStr)) {
+        return prev.filter(d => d !== dateStr);
+      } else {
+        return [...prev, dateStr];
+      }
+    });
+  };
+
+  const getLeaveCalendarDays = () => {
+    const firstDayOfMonth = new Date(leaveCalendarMonth.getFullYear(), leaveCalendarMonth.getMonth(), 1);
+    const lastDayOfMonth = new Date(leaveCalendarMonth.getFullYear(), leaveCalendarMonth.getMonth() + 1, 0);
+    
+    const startDate = startOfISOWeek(firstDayOfMonth);
+    const endDate = addDays(startOfISOWeek(lastDayOfMonth), 6);
+    
+    const days: Date[] = [];
+    let curr = startDate;
+    while (curr <= endDate) {
+      days.push(curr);
+      curr = addDays(curr, 1);
+    }
+    return days;
   };
 
   const [abnahme, setAbnahme] = useState<{
@@ -456,7 +545,7 @@ export default function App() {
     }
   };
 
-  const generatePDFBlob = async (type: 'wochenbericht' | 'abnahme', signatures: { employee?: string, customer?: string }) => {
+  const generatePDFBlob = async (type: 'wochenbericht' | 'abnahme' | 'urlaubsantrag', signatures: { employee?: string, customer?: string }) => {
     const doc = new jsPDF();
     
     // Header
@@ -467,7 +556,7 @@ export default function App() {
     try {
       const img = new Image();
       const baseUrl = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-      img.src = `${window.location.origin}${baseUrl}logo.png?v=1.0.9`;
+      img.src = `${window.location.origin}${baseUrl}logo.png?v=1.1.0`;
       await new Promise((resolve, reject) => {
         img.onload = resolve;
         img.onerror = reject;
@@ -497,7 +586,7 @@ export default function App() {
     }
     
     doc.setFontSize(16);
-    doc.text(type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll', 20, 40);
+    doc.text(type === 'wochenbericht' ? 'Wochenbericht' : type === 'abnahme' ? 'Abnahmeprotokoll' : 'Urlaubsantrag', 20, 40);
     doc.setFontSize(12);
     doc.text(`Mitarbeiter: ${userName.firstName} ${userName.lastName}`, 20, 50);
     
@@ -540,7 +629,7 @@ export default function App() {
         if (signatures.employee) {
             doc.addImage(signatures.employee, 'PNG', 20, currentY + 15, 50, 20);
         }
-    } else {
+    } else if (type === 'abnahme') {
         doc.text(`Baustelle / Adresse: ${abnahme.address}`, 20, currentY);
         doc.text(`Baustellennummer: ${abnahme.number}`, 20, currentY + 10);
         doc.text(`Teilnehmer: ${abnahme.participants.join(', ')}`, 20, currentY + 20);
@@ -601,18 +690,62 @@ export default function App() {
         if (signatures.customer) {
             doc.addImage(signatures.customer, 'PNG', 120, currentY + 15, 50, 20);
         }
+    } else if (type === 'urlaubsantrag') {
+        let currentY = 60;
+        const selectedCount = selectedLeaveDates.filter(d => {
+          const date = new Date(d);
+          const day = date.getDay();
+          return day !== 0 && day !== 6;
+        }).length;
+
+        doc.text(`Jahresurlaub: ${yearlyLeaveDays} Tage`, 20, currentY);
+        doc.text(`Genommener Urlaub: ${getTakenLeaveDays()} Tage`, 20, currentY + 10);
+        doc.text(`Dieser Antrag: ${selectedCount} Tage`, 20, currentY + 20);
+        doc.text(`Zukünftiger Resturlaub: ${Math.max(0, yearlyLeaveDays - getTakenLeaveDays() - selectedCount)} Tage`, 20, currentY + 30);
+        
+        currentY += 50;
+        doc.text('Geplante Urlaubszeiträume:', 20, currentY);
+        currentY += 10;
+        
+        const sortedDates = [...selectedLeaveDates].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+        const periods = getContinuousPeriods(sortedDates.map(d => new Date(d)));
+        
+        periods.forEach(p => {
+          if (currentY > 275) {
+            doc.addPage();
+            currentY = 20;
+          }
+          const kw = getISOWeek(p.start);
+          const startStr = format(p.start, 'dd.MM.yyyy');
+          const endStr = format(p.end, 'dd.MM.yyyy');
+          const count = countWeekdays(p.start, p.end);
+          doc.text(`- KW ${kw} (${startStr} - ${endStr}) – ${count} Tage`, 25, currentY);
+          currentY += 10;
+        });
+        
+        currentY += 10;
+        if (currentY > 240) {
+          doc.addPage();
+          currentY = 20;
+        }
+        
+        doc.text(`Datum: ${format(new Date(), 'dd.MM.yyyy')}`, 20, currentY);
+        doc.text("Unterschrift Mitarbeiter:", 20, currentY + 10);
+        if (signatures.employee) {
+            doc.addImage(signatures.employee, 'PNG', 20, currentY + 15, 50, 20);
+        }
     }
     
     return doc.output('blob');
   };
 
-  const handleSaveReport = async (type: 'wochenbericht' | 'abnahme', customSignatures?: { employee?: string, customer?: string }) => {
+  const handleSaveReport = async (type: 'wochenbericht' | 'abnahme' | 'urlaubsantrag', customSignatures?: { employee?: string, customer?: string }) => {
     if (!userName.firstName || !userName.lastName) {
       alert("Bitte geben Sie zuerst Ihren Namen in den Einstellungen ein.");
       return;
     }
     let signatures: { employee?: string, customer?: string } = {};
-    if (type === 'wochenbericht') {
+    if (type === 'wochenbericht' || type === 'urlaubsantrag') {
         if (sigCanvas.current && !sigCanvas.current.isEmpty()) {
             signatures.employee = sigCanvas.current.getCanvas().toDataURL('image/png');
         }
@@ -625,25 +758,31 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll'}.pdf`;
+    a.download = `${type === 'wochenbericht' ? 'Wochenbericht' : type === 'abnahme' ? 'Abnahmeprotokoll' : 'Urlaubsantrag'}.pdf`;
     a.click();
     URL.revokeObjectURL(url);
     addReportToHistory(
-      type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll', 
+      type === 'wochenbericht' ? 'Wochenbericht' : type === 'abnahme' ? 'Abnahmeprotokoll' : 'Urlaubsantrag', 
       'gespeichert',
       type === 'wochenbericht' 
         ? `${format(selectedWeek, 'dd.MM.')} - ${format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}`
-        : abnahme.number
+        : type === 'abnahme'
+          ? abnahme.number
+          : `${selectedLeaveDates.filter(d => {
+              const date = new Date(d);
+              const day = date.getDay();
+              return day !== 0 && day !== 6;
+            }).length} Tage`
     );
   };
 
-  const handleSendReport = async (type: 'wochenbericht' | 'abnahme', customSignatures?: { employee?: string, customer?: string }) => {
+  const handleSendReport = async (type: 'wochenbericht' | 'abnahme' | 'urlaubsantrag', customSignatures?: { employee?: string, customer?: string }) => {
     if (!userName.firstName || !userName.lastName) {
       alert("Bitte geben Sie zuerst Ihren Namen in den Einstellungen ein.");
       return;
     }
     let signatures: { employee?: string, customer?: string } = {};
-    if (type === 'wochenbericht') {
+    if (type === 'wochenbericht' || type === 'urlaubsantrag') {
         if (sigCanvas.current && !sigCanvas.current.isEmpty()) {
             signatures.employee = sigCanvas.current.getCanvas().toDataURL('image/png');
         }
@@ -665,11 +804,33 @@ export default function App() {
       subject = `Wochenbericht KW ${kw} ${name} ${dateRange}`;
       body = `Moin,\nanbei mein Wochenbericht für die KW ${kw}.\n\nBeste Grüße,\n${name}`;
       filename = `Wochenbericht_KW${kw}_${userName.firstName}_${userName.lastName}.pdf`;
-    } else {
+    } else if (type === 'abnahme') {
       const projNum = abnahme.number;
       subject = `Abnahmeprotokoll ${name} ${projNum}`;
       body = `Moin,\nanbei das Abnahmeprotokoll für das Projekt ${projNum}.\n\nBeste Grüße,\n${name}`;
       filename = `Abnahmeprotokoll_${projNum}_${userName.firstName}_${userName.lastName}.pdf`;
+    } else if (type === 'urlaubsantrag') {
+      const thisYear = new Date().getFullYear();
+      const count = selectedLeaveDates.filter(d => {
+        const date = new Date(d);
+        const day = date.getDay();
+        return day !== 0 && day !== 6;
+      }).length;
+      subject = `Urlaubsantrag ${name} ${thisYear}`;
+      
+      let periodsText = '';
+      const sortedDates = [...selectedLeaveDates].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+      const periods = getContinuousPeriods(sortedDates.map(d => new Date(d)));
+      periods.forEach(p => {
+        const kw = getISOWeek(p.start);
+        const startStr = format(p.start, 'dd.MM.yyyy');
+        const endStr = format(p.end, 'dd.MM.yyyy');
+        const countDays = countWeekdays(p.start, p.end);
+        periodsText += `- KW ${kw} (${startStr} - ${endStr}): ${countDays} Tage\n`;
+      });
+      
+      body = `Moin,\nanbei mein Urlaubsantrag für das Jahr ${thisYear}.\n\nFolgende Zeiträume sind geplant:\n${periodsText}\nInsgesamt: ${count} Tage.\n\nBeste Grüße,\n${name}`;
+      filename = `Urlaubsantrag_${thisYear}_${userName.firstName}_${userName.lastName}.pdf`;
     }
 
     const file = new File([blob], filename, { type: 'application/pdf' });
@@ -705,12 +866,33 @@ export default function App() {
     }
 
     addReportToHistory(
-      type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll', 
+      type === 'wochenbericht' ? 'Wochenbericht' : type === 'abnahme' ? 'Abnahmeprotokoll' : 'Urlaubsantrag', 
       'versendet',
       type === 'wochenbericht' 
         ? `${format(selectedWeek, 'dd.MM.')} - ${format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}`
-        : abnahme.number
+        : type === 'abnahme'
+          ? abnahme.number
+          : `${selectedLeaveDates.filter(d => {
+              const date = new Date(d);
+              const day = date.getDay();
+              return day !== 0 && day !== 6;
+            }).length} Tage`
     );
+
+    if (type === 'urlaubsantrag') {
+      const sortedDates = [...selectedLeaveDates].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+      const periods = getContinuousPeriods(sortedDates.map(d => new Date(d)));
+      for (const p of periods) {
+        await handleAddLeaveRequest({
+          start_date: format(p.start, 'yyyy-MM-dd'),
+          end_date: format(p.end, 'yyyy-MM-dd'),
+          type: 'vacation',
+          status: 'pending'
+        });
+      }
+      setSelectedLeaveDates([]);
+      setIsLeavePreview(false);
+    }
   };
 
   const handleResetWeeklyReport = () => {
@@ -750,6 +932,12 @@ export default function App() {
     else if (signatureAction === 'sendW') {
       handleSendReport('wochenbericht');
       handleResetWeeklyReport();
+    }
+    else if (signatureAction === 'saveL') {
+      handleSaveReport('urlaubsantrag');
+    }
+    else if (signatureAction === 'sendL') {
+      handleSendReport('urlaubsantrag');
     }
     else if (signatureAction === 'saveA' || signatureAction === 'sendA') {
         if (signatureStep === 'employee') {
@@ -1882,50 +2070,288 @@ export default function App() {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
-                <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-bold">Urlaubsplanung</h2>
-                  <button 
-                    onClick={() => {
-                      const start = prompt("Startdatum (JJJJ-MM-TT):");
-                      const end = prompt("Enddatum (JJJJ-MM-TT):");
-                      if (start && end) handleAddLeaveRequest({ start_date: start, end_date: end, type: 'vacation' });
-                    }}
-                    className="bg-brand-accent1 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2"
-                  >
-                    <Plus size={18} /> Antrag stellen
-                  </button>
-                </div>
+                {!isLeavePreview ? (
+                  <>
+                    <h2 className="text-2xl font-bold">Urlaubsplanung</h2>
 
-                <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">
-                  <div className="p-4 bg-[#E4E3E0]/30 border-bottom border-[#141414]/5">
-                    <p className="text-xs font-bold uppercase tracking-widest text-[#141414]/40">Deine Anträge</p>
+                    {/* Stats Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      {/* Jahresurlaub Kachel */}
+                      <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-2 flex flex-col justify-between">
+                        <p className="text-sm font-medium text-[#141414]/50">Jahresurlaub</p>
+                        <div className="flex items-baseline gap-2">
+                          <input 
+                            type="number" 
+                            value={yearlyLeaveDays} 
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10) || 0;
+                              setYearlyLeaveDays(val);
+                              localStorage.setItem('yearlyLeaveDays', val.toString());
+                            }} 
+                            className="text-3xl font-bold text-gray-900 w-20 bg-gray-50 px-2 py-1 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-accent1 text-center"
+                          />
+                          <span className="text-sm font-semibold text-gray-500">Tage</span>
+                        </div>
+                      </div>
+
+                      {/* Genommener Urlaub Kachel */}
+                      <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-2 flex flex-col justify-between">
+                        <p className="text-sm font-medium text-[#141414]/50">Genommener Urlaub</p>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-3xl font-bold text-brand-accent1">{getTakenLeaveDays()}</span>
+                          <span className="text-sm font-semibold text-gray-500">Tage</span>
+                        </div>
+                      </div>
+
+                      {/* Resturlaub Kachel */}
+                      <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-2 flex flex-col justify-between">
+                        <p className="text-sm font-medium text-[#141414]/50">Resturlaub</p>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-3xl font-bold text-brand-accent2">{Math.max(0, yearlyLeaveDays - getTakenLeaveDays())}</span>
+                          <span className="text-sm font-semibold text-gray-500">Tage</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Monatskalender Section */}
+                    <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-4">
+                      {/* Month header & navigation */}
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex flex-col">
+                          <h3 className="text-lg font-bold text-[#141414] capitalize">
+                            {format(leaveCalendarMonth, 'MMMM yyyy', { locale: de })}
+                          </h3>
+                        </div>
+                        <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-xl border border-gray-100 shadow-inner">
+                          <button 
+                            type="button"
+                            onClick={() => setLeaveCalendarMonth(prev => subMonths(prev, 1))} 
+                            className="p-1.5 hover:bg-white hover:shadow-sm rounded-lg transition-all text-gray-600 font-bold"
+                            title="Vorheriger Monat"
+                          >
+                            &lt;
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => setLeaveCalendarMonth(new Date())} 
+                            className="px-2 py-1 text-[10px] font-bold hover:bg-white hover:shadow-sm rounded-lg transition-all text-gray-500 uppercase"
+                            title="Aktueller Monat"
+                          >
+                            Heute
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => setLeaveCalendarMonth(prev => addMonths(prev, 1))} 
+                            className="p-1.5 hover:bg-white hover:shadow-sm rounded-lg transition-all text-gray-600 font-bold"
+                            title="Nächster Monat"
+                          >
+                            &gt;
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Week days header */}
+                      <div className="grid grid-cols-7 gap-1 md:gap-2 text-center">
+                        {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(d => (
+                          <div key={d} className="text-[10px] md:text-xs font-bold text-gray-400 uppercase tracking-wider">
+                            {d}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Days grid */}
+                      <div className="grid grid-cols-7 gap-2 md:gap-3">
+                        {getLeaveCalendarDays().map((day, idx) => {
+                          const dayStr = format(day, 'yyyy-MM-dd');
+                          const isCurrentMonth = day.getMonth() === leaveCalendarMonth.getMonth() && day.getFullYear() === leaveCalendarMonth.getFullYear();
+                          const isToday = format(day, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
+                          const dayOfWeek = day.getDay();
+                          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                          
+                          // Check if already requested in DB/state (approved or pending)
+                          const hasExistingRequest = leaveRequests.some(req => {
+                            if (req.employee_id !== currentUser?.id || req.status === 'rejected') return false;
+                            return dayStr >= req.start_date && dayStr <= req.end_date;
+                          });
+
+                          const isSelected = selectedLeaveDates.includes(dayStr);
+
+                          let buttonStyle = "bg-white text-gray-700 border border-gray-200 hover:border-brand-accent1 hover:bg-gray-50 cursor-pointer";
+                          if (!isCurrentMonth) {
+                            buttonStyle = "border border-dashed border-gray-100 text-gray-300 bg-gray-50/10 pointer-events-none";
+                          } else if (hasExistingRequest) {
+                            buttonStyle = "bg-blue-100 text-blue-800 border-blue-200 cursor-not-allowed pointer-events-none";
+                          } else if (isSelected) {
+                            buttonStyle = "bg-brand-accent2 text-white border-brand-accent2 cursor-pointer font-bold shadow-sm shadow-brand-accent2/25";
+                          } else if (isWeekend) {
+                            buttonStyle = "bg-gray-50 text-gray-400 border-gray-100 cursor-not-allowed pointer-events-none";
+                          }
+
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => toggleLeaveDate(day)}
+                              className={cn(
+                                "aspect-square w-full max-w-[44px] mx-auto flex flex-col items-center justify-center rounded-full font-semibold text-xs md:text-sm relative transition-all duration-150 outline-none",
+                                buttonStyle
+                              )}
+                            >
+                              <span>{day.getDate()}</span>
+                              {isToday && (
+                                <span className={cn(
+                                  "absolute bottom-1 w-1 h-1 rounded-full",
+                                  isSelected ? "bg-white" : "bg-brand-accent1"
+                                )} />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Legende */}
+                      <div className="pt-2">
+                        <div className="bg-gray-50/70 p-4 rounded-2xl border border-gray-100/50 flex flex-wrap gap-x-6 gap-y-2 text-xs">
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-blue-100 border border-blue-200" />
+                            <span className="text-gray-600 font-medium">Beantragter / Genommener Urlaub</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-brand-accent2 border border-brand-accent2" />
+                            <span className="text-gray-600 font-medium">Deine aktuelle Auswahl</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-gray-50 border border-gray-100" />
+                            <span className="text-gray-600 font-medium">Wochenende (nicht wählbar)</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Urlaubsantrag Erstellen Button */}
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setIsLeavePreview(true)}
+                        disabled={selectedLeaveDates.length === 0}
+                        className={cn(
+                          "w-full sm:w-auto px-8 py-4 rounded-2xl font-bold transition-all text-center",
+                          selectedLeaveDates.length > 0
+                            ? "bg-brand-accent1 text-white hover:bg-brand-accent1/90 cursor-pointer shadow-lg shadow-brand-accent1/10"
+                            : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                        )}
+                      >
+                        Urlaubsantrag erstellen ({selectedLeaveDates.length} Tage ausgewählt)
+                      </button>
+                    </div>
+
+                    {/* Liste der Anträge */}
+                    <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">
+                      <div className="p-4 bg-[#E4E3E0]/30 border-bottom border-[#141414]/5">
+                        <p className="text-xs font-bold uppercase tracking-widest text-[#141414]/40">Deine Anträge</p>
+                      </div>
+                      {leaveRequests
+                        .filter(r => r.employee_id === currentUser?.id)
+                        .map((req, i) => (
+                        <div key={req.id} className={cn("p-4 flex items-center justify-between", i !== 0 && "border-t border-[#141414]/5")}>
+                          <div>
+                            <p className="font-medium">{format(new Date(req.start_date), 'dd.MM.')} – {format(new Date(req.end_date), 'dd.MM.yyyy')}</p>
+                            <p className="text-xs text-[#141414]/50 capitalize">{req.type}</p>
+                          </div>
+                          <div>
+                            <span className={cn(
+                              "px-3 py-1 rounded-full text-[10px] font-bold uppercase",
+                              req.status === 'approved' ? "bg-emerald-100 text-emerald-700" :
+                              req.status === 'rejected' ? "bg-red-100 text-red-700" :
+                              "bg-amber-100 text-amber-700"
+                            )}>
+                              {req.status === 'approved' ? 'Genehmigt' : req.status === 'rejected' ? 'Abgelehnt' : 'Ausstehend'}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                      {leaveRequests.filter(r => r.employee_id === currentUser?.id).length === 0 && (
+                        <div className="p-12 text-center text-[#141414]/30">
+                          <p>Keine Urlaubsanträge gefunden.</p>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  // Preview View
+                  <div className="space-y-6">
+                    <h2 className="text-2xl font-bold">Vorschau Urlaubsantrag</h2>
+
+                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-4">
+                      <div>
+                        <h3 className="text-lg font-bold text-[#141414] border-b pb-2">Übersicht</h3>
+                        <p className="text-sm text-gray-600 mt-2">Mitarbeiter: <span className="font-semibold text-gray-900">{userName.firstName} {userName.lastName}</span></p>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2">
+                        <div className="space-y-1">
+                          <p className="text-xs text-[#141414]/50 uppercase font-semibold">Jahresurlaub</p>
+                          <p className="text-lg font-bold text-gray-900">{yearlyLeaveDays} Tage</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs text-[#141414]/50 uppercase font-semibold">Bisher Genommen</p>
+                          <p className="text-lg font-bold text-brand-accent1">{getTakenLeaveDays()} Tage</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs text-[#141414]/50 uppercase font-semibold">Dieser Antrag</p>
+                          <p className="text-lg font-bold text-brand-accent2">{selectedLeaveDates.length} Tage</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs text-[#141414]/50 uppercase font-semibold">Resturlaub danach</p>
+                          <p className="text-lg font-bold text-gray-900">{Math.max(0, yearlyLeaveDays - getTakenLeaveDays() - selectedLeaveDates.length)} Tage</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-4">
+                      <h3 className="text-lg font-bold text-[#141414] border-b pb-2">Geplante Zeiträume</h3>
+                      <div className="space-y-2">
+                        {(() => {
+                          const sortedDates = [...selectedLeaveDates].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+                          const periods = getContinuousPeriods(sortedDates.map(d => new Date(d)));
+                          return periods.map((p, idx) => {
+                            const kw = getISOWeek(p.start);
+                            const startStr = format(p.start, 'dd.MM.yyyy');
+                            const endStr = format(p.end, 'dd.MM.yyyy');
+                            const count = countWeekdays(p.start, p.end);
+                            return (
+                              <div key={idx} className="p-3 bg-gray-50 rounded-2xl border border-gray-100 flex justify-between items-center text-sm">
+                                <div>
+                                  <span className="font-bold text-brand-accent1 mr-3">KW {kw}</span>
+                                  <span className="text-gray-700">{startStr} – {endStr}</span>
+                                </div>
+                                <span className="font-semibold text-brand-accent2">{count} Tage</span>
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Preview Buttons */}
+                    <div className="flex flex-col sm:flex-row gap-4 pt-6">
+                      <button 
+                        type="button"
+                        onClick={() => setIsLeavePreview(false)} 
+                        className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center"
+                      >
+                        Abbrechen
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('sendL'); }} 
+                        className="w-full sm:flex-1 bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center"
+                      >
+                        Urlaubsantrag senden
+                      </button>
+                    </div>
                   </div>
-                  {leaveRequests
-                    .filter(r => r.employee_id === currentUser?.id)
-                    .map((req, i) => (
-                    <div key={req.id} className={cn("p-4 flex items-center justify-between", i !== 0 && "border-t border-[#141414]/5")}>
-                      <div>
-                        <p className="font-medium">{format(new Date(req.start_date), 'dd.MM.')} – {format(new Date(req.end_date), 'dd.MM.yyyy')}</p>
-                        <p className="text-xs text-[#141414]/50 capitalize">{req.type}</p>
-                      </div>
-                      <div>
-                        <span className={cn(
-                          "px-3 py-1 rounded-full text-[10px] font-bold uppercase",
-                          req.status === 'approved' ? "bg-emerald-100 text-emerald-700" :
-                          req.status === 'rejected' ? "bg-red-100 text-red-700" :
-                          "bg-amber-100 text-amber-700"
-                        )}>
-                          {req.status === 'approved' ? 'Genehmigt' : req.status === 'rejected' ? 'Abgelehnt' : 'Ausstehend'}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                  {leaveRequests.filter(r => r.employee_id === currentUser?.id).length === 0 && (
-                    <div className="p-12 text-center text-[#141414]/30">
-                      <p>Keine Urlaubsanträge gefunden.</p>
-                    </div>
-                  )}
-                </div>
+                )}
               </motion.div>
             )}
 
@@ -2099,7 +2525,7 @@ export default function App() {
                   <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div className="space-y-1">
                       <p className="text-sm font-bold text-gray-900">Malerprofis Uderstadt</p>
-                      <p className="text-xs text-[#141414]/50">Version 1.0.9 (Build 2026.07.17)</p>
+                      <p className="text-xs text-[#141414]/50">Version 1.1.0 (Build 2026.07.17)</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
