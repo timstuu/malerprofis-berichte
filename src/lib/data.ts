@@ -1,6 +1,6 @@
-import { addDays, format } from 'date-fns';
 import { supabase } from './supabase.ts';
 import { WEEKDAYS } from './hours.ts';
+import { dateOfWeekday, emptyWeek, weekKey, type WeeklyEntries } from './week.ts';
 import type {
   Assignment,
   Employee,
@@ -17,6 +17,10 @@ import type {
  * Vorgängerversion hat Verbindungsfehler stillschweigend verschluckt und lief
  * dadurch dauerhaft mit leeren Listen, ohne dass es jemandem auffiel.
  */
+
+// Weitergereicht, damit bestehende Importe aus data.ts unverändert gelten.
+export { dateOfWeekday, emptyWeek, weekKey };
+export type { WeeklyEntry, WeeklyEntries } from './week.ts';
 
 function unwrap<T>(result: { data: T | null; error: { message: string } | null }, was: string): T {
   if (result.error) {
@@ -142,16 +146,6 @@ export async function fetchAssignments(from: string, to: string): Promise<Assign
 // Wochenberichte
 // ---------------------------------------------------------------------------
 
-/** Der ISO-Montag als yyyy-MM-dd — Schlüssel eines Wochenberichts. */
-export function weekKey(weekStart: Date): string {
-  return format(weekStart, 'yyyy-MM-dd');
-}
-
-/** Datum des n-ten Wochentags (0 = Montag) innerhalb der Woche. */
-export function dateOfWeekday(weekStart: Date, weekdayIndex: number): string {
-  return format(addDays(weekStart, weekdayIndex), 'yyyy-MM-dd');
-}
-
 /** Alle gespeicherten Berichtszeilen des angemeldeten Mitarbeiters. */
 export async function fetchMyReportEntries(employeeId: string): Promise<ReportEntryRow[]> {
   const reports = unwrap<{ id: string }[]>(
@@ -171,25 +165,6 @@ export async function fetchMyReportEntries(employeeId: string): Promise<ReportEn
       .order('date'),
     'Berichtszeilen',
   );
-}
-
-/** Struktur, in der der Wochenbericht im UI gehalten wird. */
-export interface WeeklyEntry {
-  id: string;
-  project: string; // Adresse der Baustelle
-  projectNumber: string;
-  description: string;
-  hours: number;
-  startTime?: string;
-  endTime?: string;
-  pause?: number;
-  sourceAssignmentId?: string | null;
-}
-
-export type WeeklyEntries = Record<string, { entries: WeeklyEntry[] }>;
-
-export function emptyWeek(): WeeklyEntries {
-  return Object.fromEntries(WEEKDAYS.map((d) => [d, { entries: [] }])) as WeeklyEntries;
 }
 
 /**

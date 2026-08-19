@@ -45,13 +45,16 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Logo from './components/Logo.tsx';
 import AdminPanel from './features/admin/AdminPanel.tsx';
+import WeekGrid from './features/planning/WeekGrid.tsx';
 import { useAuth } from './lib/auth.tsx';
 import { calculateHours, WEEKDAYS } from './lib/hours.ts';
 import {
   createLeaveRequest,
   decideLeaveRequest,
   emptyWeek,
+  fetchAssignments,
   fetchEmployees,
+  fetchHolidays,
   fetchLeaveRequests,
   fetchMyReportEntries,
   fetchSites,
@@ -61,7 +64,10 @@ import {
   withdrawLeaveRequest,
   type ReportEntryRow,
   type WeeklyEntries,
+  type WeeklyEntry,
 } from './lib/data.ts';
+import { fetchHandledAssignmentIds, markAssignments } from './lib/planning.ts';
+import { buildPrefill } from './lib/prefill.ts';
 import type { Employee, LeaveRequest, Site } from './lib/database.types.ts';
 
 // Utility for tailwind classes
@@ -91,7 +97,7 @@ interface WeekDraft {
 const DRAFT_KEY = 'weekDraft';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'wochenbericht' | 'abnahme' | 'leave' | 'admin' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'wochenbericht' | 'planung' | 'abnahme' | 'leave' | 'admin' | 'settings'>('dashboard');
   const [selectedWeek, setSelectedWeek] = useState(startOfISOWeek(new Date()));
   const { employee: currentUser, signOut } = useAuth();
   const isAdmin = currentUser?.role === 'admin';
@@ -106,6 +112,7 @@ export default function App() {
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<Date>(new Date());
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'offline'>('idle');
+  const [prefillNotice, setPrefillNotice] = useState<string | null>(null);
 
   // Der Name kommt aus den Stammdaten, nicht mehr aus dem Gerätespeicher.
   const userName = {
@@ -319,6 +326,61 @@ export default function App() {
 
   const [weekLoading, setWeekLoading] = useState(true);
 
+  /**
+   * Übernimmt geplante Einsätze, genehmigten Urlaub und Feiertage in den
+   * Bericht. Läuft automatisch, sobald eine Woche geladen ist — additiv, ohne
+   * je vorhandene Eingaben zu überschreiben.
+   */
+  const runPrefill = React.useCallback(
+    async (base: WeeklyEntries): Promise<WeeklyEntries> => {
+      if (!currentUser || sites.length === 0) return base;
+
+      try {
+        const from = weekKey(selectedWeek);
+        const to = format(addDays(selectedWeek, 6), 'yyyy-MM-dd');
+
+        const [assignments, handled, holidays] = await Promise.all([
+          fetchAssignments(from, to),
+          fetchHandledAssignmentIds(currentUser.id),
+          fetchHolidays(from, to),
+        ]);
+
+        const result = buildPrefill(
+          selectedWeek,
+          base,
+          assignments,
+          handled,
+          leaveRequests,
+          holidays,
+          sites,
+          currentUser.id,
+        );
+
+        if (result.addedCount === 0) return base;
+
+        // Reihenfolge ist wichtig: erst den Bericht speichern, dann die
+        // Planzeilen als übernommen vermerken. Andersherum wären sie bei einem
+        // Fehler als erledigt markiert, ohne je gespeichert worden zu sein —
+        // und kämen nie wieder.
+        await saveWeeklyReport(currentUser.id, selectedWeek, result.entries, sites);
+        if (result.importedAssignmentIds.length > 0) {
+          await markAssignments(currentUser.id, result.importedAssignmentIds, 'imported');
+        }
+        setSavedEntries(await fetchMyReportEntries(currentUser.id));
+
+        setPrefillNotice(
+          `${result.addedCount} ${result.addedCount === 1 ? 'Eintrag wurde' : 'Einträge wurden'} aus der Planung übernommen.`,
+        );
+        return result.entries;
+      } catch (error) {
+        // Ohne Netz bleibt es beim bisherigen Stand — der Bericht ist trotzdem nutzbar.
+        console.error('Planung konnte nicht übernommen werden:', error);
+        return base;
+      }
+    },
+    [currentUser, selectedWeek, sites, leaveRequests],
+  );
+
   // Beim Wechsel von Woche oder Benutzer: erst den lokalen Entwurf, sonst den
   // gespeicherten Stand aus der Datenbank. Der lokale Entwurf hat Vorrang, weil
   // er Eingaben enthalten kann, die mangels Netz noch nicht übertragen wurden.
@@ -351,21 +413,47 @@ export default function App() {
 
       if (cancelled) return;
 
+      let base: WeeklyEntries;
       if (draft) {
-        setWeeklyEntries(draft.entries);
+        base = draft.entries;
         setWeeklyBreaks(draft.breaks);
       } else if (remote) {
-        setWeeklyEntries(remote.entries);
+        base = remote.entries;
       } else {
-        setWeeklyEntries(emptyWeek());
+        base = emptyWeek();
       }
+
+      // Planung übernehmen, bevor der Stand angezeigt wird — so sieht der Maler
+      // seine Woche gleich vollständig. In einen bereits abgegebenen und
+      // unterschriebenen Bericht läuft bewusst nichts mehr nach.
+      const withPlan = remote?.status === 'signed' ? base : await runPrefill(base);
+      if (cancelled) return;
+
+      setWeeklyEntries(withPlan);
       setWeekLoading(false);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [currentUser, selectedWeek]);
+  }, [currentUser, selectedWeek, runPrefill]);
+
+  /**
+   * Löscht eine Berichtszeile. Stammt sie aus der Planung, wird sie als
+   * verworfen vermerkt und nie wieder automatisch eingefügt.
+   */
+  const handleDeleteEntry = async (day: string, entry: WeeklyEntry) => {
+    const filtered = (weeklyEntries[day]?.entries || []).filter(e => e.id !== entry.id);
+    setWeeklyEntries({ ...weeklyEntries, [day]: { entries: filtered } });
+
+    if (entry.sourceAssignmentId && currentUser) {
+      try {
+        await markAssignments(currentUser.id, [entry.sourceAssignmentId], 'dismissed');
+      } catch (error) {
+        console.error('Verworfene Planzeile konnte nicht vermerkt werden:', error);
+      }
+    }
+  };
 
   // Jede Änderung sofort lokal sichern. Ohne das war die eingegebene Woche nach
   // einem Neuladen der Seite verloren.
@@ -808,6 +896,7 @@ export default function App() {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'wochenbericht', label: 'Wochenbericht', icon: Clock },
+    { id: 'planung', label: 'Planung', icon: Calendar },
     { id: 'abnahme', label: 'Abnahme', icon: CheckSquare },
     { id: 'leave', label: 'Urlaub', icon: Calendar },
     ...(isAdmin ? [{ id: 'admin', label: 'Büro', icon: Users }] : []),
@@ -860,6 +949,18 @@ export default function App() {
                 className="mt-3 bg-red-100 hover:bg-red-200 text-red-800 font-bold text-xs px-3 py-2 rounded-xl cursor-pointer"
               >
                 Erneut versuchen
+              </button>
+            </div>
+          )}
+          {prefillNotice && (
+            <div className="mb-6 flex items-center justify-between gap-4 text-sm text-brand-accent1 bg-brand-accent1/10 border border-brand-accent1/20 rounded-2xl p-4">
+              <span>{prefillNotice}</span>
+              <button
+                onClick={() => setPrefillNotice(null)}
+                className="text-brand-accent1/60 hover:text-brand-accent1 cursor-pointer"
+                aria-label="Hinweis schließen"
+              >
+                <X size={16} />
               </button>
             </div>
           )}
@@ -1155,10 +1256,7 @@ export default function App() {
                           <div key={entry.id} className="relative p-3.5 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-1.5">
                             {/* Löschen-Funktion als kleines Icon oben rechts */}
                             <button
-                              onClick={() => {
-                                const filtered = (weeklyEntries[day]?.entries || []).filter(e => e.id !== entry.id);
-                                setWeeklyEntries({ ...weeklyEntries, [day]: { entries: filtered } });
-                              }}
+                              onClick={() => handleDeleteEntry(day, entry)}
                               className="absolute top-2.5 right-2.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 p-1.5 rounded-xl transition-colors cursor-pointer"
                               title="Eintrag löschen"
                             >
@@ -1814,6 +1912,31 @@ export default function App() {
                     </div>
                   )}
                 </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'planung' && (
+              <motion.div
+                key="planung"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-6"
+              >
+                <div>
+                  <h2 className="text-2xl font-bold">Einsatzplanung</h2>
+                  <p className="text-sm text-[#141414]/50 mt-1">
+                    {isAdmin
+                      ? 'Einsätze anlegen und ändern. Die Maler sehen die Planung sofort.'
+                      : 'Wer ist diese Woche wo. Geplant wird im Büro.'}
+                  </p>
+                </div>
+                <WeekGrid
+                  employees={employees}
+                  sites={sites}
+                  readOnly={!isAdmin}
+                  currentEmployeeId={currentUser?.id}
+                />
               </motion.div>
             )}
 
