@@ -46,6 +46,9 @@ import autoTable from 'jspdf-autotable';
 import Logo from './components/Logo.tsx';
 import AdminPanel from './features/admin/AdminPanel.tsx';
 import WeekGrid from './features/planning/WeekGrid.tsx';
+import LeaveView from './features/leave/LeaveView.tsx';
+import LeaveAdmin from './features/leave/LeaveAdmin.tsx';
+import PushToggle from './features/leave/PushToggle.tsx';
 import { useAuth } from './lib/auth.tsx';
 import { calculateHours, WEEKDAYS } from './lib/hours.ts';
 import {
@@ -62,13 +65,14 @@ import {
   saveWeeklyReport,
   weekKey,
   withdrawLeaveRequest,
+  type AssignmentRow,
   type ReportEntryRow,
   type WeeklyEntries,
   type WeeklyEntry,
 } from './lib/data.ts';
 import { fetchHandledAssignmentIds, markAssignments } from './lib/planning.ts';
 import { buildPrefill } from './lib/prefill.ts';
-import type { Employee, LeaveRequest, Site } from './lib/database.types.ts';
+import type { Employee, Holiday, LeaveRequest, Site } from './lib/database.types.ts';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -107,6 +111,12 @@ export default function App() {
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   /** Bereits gespeicherte Berichtszeilen des angemeldeten Mitarbeiters. */
   const [savedEntries, setSavedEntries] = useState<ReportEntryRow[]>([]);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  /**
+   * Einsätze im Umfeld von heute. Wird gebraucht, um vor einer Urlaubs-
+   * genehmigung zu zeigen, wie viele geplante Einsätze dabei gelöscht werden.
+   */
+  const [nearbyAssignments, setNearbyAssignments] = useState<AssignmentRow[]>([]);
   const [reportHistory, setReportHistory] = useState<ReportHistory[]>([]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<Date>(new Date());
@@ -269,16 +279,25 @@ export default function App() {
   const reloadData = React.useCallback(async () => {
     if (!currentUser) return;
     try {
-      const [emp, siteList, leaves, entries] = await Promise.all([
+      // Zeitfenster für Feiertage und für die Einsätze, die eine Urlaubs-
+      // genehmigung betreffen könnte.
+      const from = format(subMonths(new Date(), 1), 'yyyy-MM-dd');
+      const to = format(addMonths(new Date(), 14), 'yyyy-MM-dd');
+
+      const [emp, siteList, leaves, entries, holidayList, assignments] = await Promise.all([
         fetchEmployees(),
         fetchSites(),
         fetchLeaveRequests(),
         fetchMyReportEntries(currentUser.id),
+        fetchHolidays(from, to),
+        fetchAssignments(from, to),
       ]);
       setEmployees(emp);
       setSites(siteList);
       setLeaveRequests(leaves);
       setSavedEntries(entries);
+      setHolidays(holidayList);
+      setNearbyAssignments(assignments);
       setLoadError(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -290,6 +309,12 @@ export default function App() {
   useEffect(() => {
     reloadData();
   }, [reloadData]);
+
+  /** Wie viele geplante Einsätze fallen in diesen Zeitraum? */
+  const assignmentCountInRange = (employeeId: string, start: string, end: string) =>
+    nearbyAssignments.filter(
+      (a) => a.employee_id === employeeId && a.date >= start && a.date <= end,
+    ).length;
 
   const handleAddLeaveRequest = async (startDate: string, endDate: string) => {
     if (!currentUser) return;
@@ -1860,7 +1885,7 @@ export default function App() {
 
 
 
-            {activeTab === 'leave' && (
+            {activeTab === 'leave' && currentUser && (
               <motion.div
                 key="leave"
                 initial={{ opacity: 0, y: 10 }}
@@ -1868,50 +1893,26 @@ export default function App() {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
-                <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-bold">Urlaubsplanung</h2>
-                  <button 
-                    onClick={() => {
-                      const start = prompt("Startdatum (JJJJ-MM-TT):");
-                      const end = prompt("Enddatum (JJJJ-MM-TT):");
-                      if (start && end) handleAddLeaveRequest(start, end);
-                    }}
-                    className="bg-brand-accent1 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2"
-                  >
-                    <Plus size={18} /> Antrag stellen
-                  </button>
-                </div>
+                <LeaveView
+                  currentUser={currentUser}
+                  leaveRequests={leaveRequests}
+                  holidays={holidays}
+                  onSubmit={handleAddLeaveRequest}
+                  onWithdraw={handleWithdrawLeaveRequest}
+                />
 
-                <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">
-                  <div className="p-4 bg-[#E4E3E0]/30 border-bottom border-[#141414]/5">
-                    <p className="text-xs font-bold uppercase tracking-widest text-[#141414]/40">Deine Anträge</p>
+                {isAdmin && (
+                  <div className="pt-4 border-t border-[#141414]/10">
+                    <h2 className="text-2xl font-bold mb-6">Abwesenheiten verwalten</h2>
+                    <LeaveAdmin
+                      employees={employees}
+                      leaveRequests={leaveRequests}
+                      holidays={holidays}
+                      assignmentCountInRange={assignmentCountInRange}
+                      onChanged={reloadData}
+                    />
                   </div>
-                  {leaveRequests
-                    .filter(r => r.employee_id === currentUser?.id)
-                    .map((req, i) => (
-                    <div key={req.id} className={cn("p-4 flex items-center justify-between", i !== 0 && "border-t border-[#141414]/5")}>
-                      <div>
-                        <p className="font-medium">{format(new Date(req.start_date), 'dd.MM.')} – {format(new Date(req.end_date), 'dd.MM.yyyy')}</p>
-                        <p className="text-xs text-[#141414]/50 capitalize">{req.type}</p>
-                      </div>
-                      <div>
-                        <span className={cn(
-                          "px-3 py-1 rounded-full text-[10px] font-bold uppercase",
-                          req.status === 'approved' ? "bg-emerald-100 text-emerald-700" :
-                          req.status === 'rejected' ? "bg-red-100 text-red-700" :
-                          "bg-amber-100 text-amber-700"
-                        )}>
-                          {req.status === 'approved' ? 'Genehmigt' : req.status === 'rejected' ? 'Abgelehnt' : 'Ausstehend'}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                  {leaveRequests.filter(r => r.employee_id === currentUser?.id).length === 0 && (
-                    <div className="p-12 text-center text-[#141414]/30">
-                      <p>Keine Urlaubsanträge gefunden.</p>
-                    </div>
-                  )}
-                </div>
+                )}
               </motion.div>
             )}
 
@@ -1979,6 +1980,12 @@ export default function App() {
                         {currentUser?.remaining_leave_days ?? 0} Tage
                       </p>
                     </div>
+                    {currentUser && (
+                      <div className="pt-2 border-t border-[#141414]/5">
+                        <PushToggle employeeId={currentUser.id} />
+                      </div>
+                    )}
+
                     <button
                       onClick={signOut}
                       className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-colors cursor-pointer"

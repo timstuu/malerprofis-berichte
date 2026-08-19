@@ -23,5 +23,8 @@
     "allowImportingTsExtensions": true,
     "types": ["vite/client", "vite-plugin-pwa/client"],
     "noEmit": true
-  }
+  },
+  "include": ["src", "vite.config.ts"],
+  "comment": "supabase/functions läuft unter Deno und wird bewusst nicht mitgeprüft.",
+  "exclude": ["node_modules", "dist", "supabase"]
 }

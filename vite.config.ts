@@ -14,6 +14,11 @@ export default defineConfig(({mode}) => {
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['icon-192x192.png', 'icon-512x512.png', 'apple-touch-icon.png', 'logo.png'],
+        workbox: {
+          // Eigener Push-Handler, an den generierten Service Worker angehängt.
+          // So bleibt die Caching-Strategie unverändert.
+          importScripts: ['push-handler.js'],
+        },
         manifest: {
           name: 'Malerprofis Uderstadt',
           short_name: 'Malerprofis',

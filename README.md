@@ -10,9 +10,14 @@ Daten liegt vollständig in den Row-Level-Security-Regeln der Datenbank.
 ### 1. Supabase-Projekt
 
 1. Projekt in der **Region EU (Frankfurt)** anlegen.
-2. Im SQL-Editor `supabase/migrations/0001_init.sql` ausführen. Das legt alle
-   Tabellen, die Sicherheitsregeln, die Feiertage Hamburgs (2026–2032) und die
-   sechs Abwesenheits-Baustellen (`040-7 Feiertag` … `073-7 Mitarbeiterschulung`) an.
+2. Im SQL-Editor die Migrationen aus `supabase/migrations/` **der Reihe nach**
+   ausführen:
+   - `0001_init.sql` — Tabellen, Sicherheitsregeln, Feiertage Hamburgs
+     (2026–2032) und die sechs Abwesenheits-Baustellen
+     (`040-7 Feiertag` … `073-7 Mitarbeiterschulung`)
+   - `0002_leave.sql` — Genehmigen, Ablehnen und Krankmeldung als
+     Datenbankfunktionen, damit Urlaubskonto und Einsatzplanung nicht
+     auseinanderlaufen können
 3. Unter **Project Settings → API** die Projekt-URL und den `anon`-Key notieren.
 
 ### 2. Zugangsdaten hinterlegen
@@ -44,6 +49,37 @@ values ('<UUID aus Schritt 1>', 'Vorname', 'Nachname', 'admin');
 Ab dann können weitere Mitarbeiter im Büro-Bereich der App gepflegt werden; ihre
 Anmeldekonten entstehen weiterhin unter **Authentication → Users**.
 
+### 4. Benachrichtigungen einrichten (optional)
+
+Ohne diese Schritte funktioniert die App vollständig — es kommen lediglich keine
+Push-Nachrichten an, und der Schalter in den Einstellungen erklärt das.
+
+1. **Schlüsselpaar erzeugen.** Es entsteht auf deinem Rechner und wird nirgends
+   gespeichert:
+
+   ```bash
+   node scripts/generate-vapid-keys.mjs
+   ```
+
+2. **Öffentlichen Schlüssel** als `VITE_VAPID_PUBLIC_KEY` in `.env.local` und als
+   GitHub-Repository-Secret hinterlegen (er ist für den Browser bestimmt und darf
+   öffentlich sein).
+
+3. **Privaten Schlüssel** nur in Supabase hinterlegen — niemals ins Repository:
+
+   ```bash
+   supabase functions deploy send-push --no-verify-jwt
+   supabase secrets set VAPID_PRIVATE_KEY=... VAPID_PUBLIC_KEY=... VAPID_SUBJECT=mailto:buero@…
+   ```
+
+4. **Database Webhook anlegen** (Supabase → Database → Webhooks):
+   Tabelle `leave_requests`, Ereignisse **Insert** und **Update**, Ziel die
+   Edge Function `send-push`.
+
+5. Jeder Mitarbeiter schaltet Benachrichtigungen einmalig in den **Einstellungen**
+   der App ein. Auf dem iPhone geht das nur in der über „Zum Home-Bildschirm"
+   installierten App (ab iOS 16.4) — im Safari-Tab existiert die Push-Funktion nicht.
+
 ## Entwicklung
 
 ```bash
@@ -56,17 +92,24 @@ npm run dev
 | `npm run dev` | Entwicklungsserver (Vite) |
 | `npm run build` | Produktionsbuild nach `dist/` |
 | `npm run lint` | Typprüfung (`tsc --noEmit`) |
+| `npm run test` | Prüft die Übernahme der Planung und die Urlaubsberechnung |
 
 ## Aufbau
 
 ```
 src/
-  lib/         supabase-Client, Anmeldung, Datenzugriff, Arbeitszeit-Berechnung
+  lib/         supabase-Client, Anmeldung, Datenzugriff, Push
+               prefill.ts / leave-rules.ts / hours.ts enthalten die fachlichen
+               Regeln — bewusst ohne Datenbankzugriff, damit sie ohne laufende
+               Umgebung nachvollziehbar und prüfbar sind (*.test.ts daneben)
   components/  Anmeldebildschirm, Logo
-  features/    Büro-Bereich
+  features/    Büro-Bereich, Einsatzplanung, Urlaub
   App.tsx      Dashboard, Wochenbericht, Abnahme, Urlaub, Einstellungen
 supabase/
-  migrations/  Datenbankschema und Sicherheitsregeln
+  migrations/  Datenbankschema, Sicherheitsregeln, Genehmigungslogik
+  functions/   send-push (Deno) — läuft nicht im Browser und wird deshalb von
+               der Typprüfung der App ausgenommen
+scripts/       VAPID-Schlüssel erzeugen
 ```
 
 ## Rollen und Sichtbarkeit
