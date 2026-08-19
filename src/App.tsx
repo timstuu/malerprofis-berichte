@@ -12,7 +12,6 @@ import {
   subWeeks,
   addMonths,
   subMonths,
-  getISOWeek,
 } from 'date-fns';
 import { 
   LayoutDashboard, 
@@ -42,7 +41,28 @@ import { motion, AnimatePresence } from 'motion/react';
 import { de } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { generatePDFBlob, countWeekdays, getContinuousPeriods } from './utils/pdfGenerator';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import Logo from './components/Logo.tsx';
+import AdminPanel from './features/admin/AdminPanel.tsx';
+import { useAuth } from './lib/auth.tsx';
+import { calculateHours, WEEKDAYS } from './lib/hours.ts';
+import {
+  createLeaveRequest,
+  decideLeaveRequest,
+  emptyWeek,
+  fetchEmployees,
+  fetchLeaveRequests,
+  fetchMyReportEntries,
+  fetchSites,
+  loadWeeklyReport,
+  saveWeeklyReport,
+  weekKey,
+  withdrawLeaveRequest,
+  type ReportEntryRow,
+  type WeeklyEntries,
+} from './lib/data.ts';
+import type { Employee, LeaveRequest, Site } from './lib/database.types.ts';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -50,148 +70,56 @@ function cn(...inputs: ClassValue[]) {
 }
 
 // Types
-interface Employee {
-  id: string;
-  first_name: string;
-  last_name: string;
-  role: 'admin' | 'foreman' | 'worker';
-  remaining_leave_days: number;
-}
-
-interface Project {
-  id: string;
-  name: string;
-  customer: string;
-  status: string;
-}
-
-interface TimeEntry {
-  id: string;
-  employee_id: string;
-  project_id: string;
-  project_name: string;
-  first_name: string;
-  last_name: string;
-  date: string;
-  duration: number;
-  description: string;
-}
-
-interface LeaveRequest {
-  id: string;
-  employee_id: string;
-  first_name: string;
-  last_name: string;
-  start_date: string;
-  end_date: string;
-  status: 'pending' | 'approved' | 'rejected';
-  type: string;
-}
-
-interface Report {
-  id: string;
-  project_id: string;
-  project_name: string;
-  employee_id: string;
-  first_name: string;
-  last_name: string;
-  created_at: string;
-  work_days: { date: string; hours: number }[];
-  tasks: string;
-  materials: string;
-  customer_name: string;
-  signature: string;
-  status: 'draft' | 'signed' | 'sent';
-}
+// Employee, LeaveRequest und Site kommen aus lib/database.types.ts und spiegeln
+// das Datenbankschema. Die folgenden Typen betreffen nur die Oberfläche.
 
 interface ReportHistory {
   date: string;
-  type: 'Wochenbericht' | 'Abnahmeprotokoll' | 'Urlaubsantrag';
+  type: 'Wochenbericht' | 'Abnahmeprotokoll';
   action: 'gespeichert' | 'versendet';
   detail: string;
 }
 
-interface WeeklyEntry {
-  id: string;
-  day: string;
-  project: string;
-  projectNumber: string;
-  description: string;
-  hours: number;
+/** Entwurf einer Woche, wie er lokal zwischengespeichert wird. */
+interface WeekDraft {
+  weekStart: string;
+  entries: WeeklyEntries;
+  breaks: Record<string, number>;
+  savedAt: string;
 }
 
-// Logo component replacement using the png file
-function Logo({ className }: { className?: string }) {
-  return <img src={`${import.meta.env.BASE_URL}logo.png?v=1.1.1`} alt="Malerprofis Uderstadt Logo" className={className} />;
-}
-
-const DEFAULT_PROJECTS = [
-  { number: '040-7', address: 'Feiertag', isDefault: true },
-  { number: '050-7', address: 'Krank', isDefault: true },
-  { number: '060-7', address: 'Urlaub', isDefault: true },
-  { number: '061-7', address: 'Flexstunden minus', isDefault: true },
-  { number: '070-7', address: 'Lagerarbeiten', isDefault: true },
-  { number: '073-7', address: 'Mitarbeiterschulung', isDefault: true }
-];
+const DRAFT_KEY = 'weekDraft';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'wochenbericht' | 'abnahme' | 'leave' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'wochenbericht' | 'abnahme' | 'leave' | 'admin' | 'settings'>('dashboard');
   const [selectedWeek, setSelectedWeek] = useState(startOfISOWeek(new Date()));
+  const { employee: currentUser, signOut } = useAuth();
+  const isAdmin = currentUser?.role === 'admin';
+
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
-  const [reports, setReports] = useState<Report[]>([]);
+  /** Bereits gespeicherte Berichtszeilen des angemeldeten Mitarbeiters. */
+  const [savedEntries, setSavedEntries] = useState<ReportEntryRow[]>([]);
   const [reportHistory, setReportHistory] = useState<ReportHistory[]>([]);
-  const [userName, setUserName] = useState({ firstName: '', lastName: '' });
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<Date>(new Date());
-  const [localProjects, setLocalProjects] = useState<{ number: string; address: string }[]>([]);
-  const [isAddingProject, setIsAddingProject] = useState(false);
-  const [newProjectNumber, setNewProjectNumber] = useState('');
-  const [newProjectAddress, setNewProjectAddress] = useState('');
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'offline'>('idle');
 
-  const sortProjects = (list: { number: string; address: string }[]) => {
-    return [...list].sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true, sensitivity: 'base' }));
+  // Der Name kommt aus den Stammdaten, nicht mehr aus dem Gerätespeicher.
+  const userName = {
+    firstName: currentUser?.first_name ?? '',
+    lastName: currentUser?.last_name ?? '',
   };
 
-  useEffect(() => {
-    const saved = localStorage.getItem('localProjects');
-    if (saved) {
-      try {
-        setLocalProjects(sortProjects(JSON.parse(saved)));
-      } catch (e) {
-        console.error("Failed to parse localProjects:", e);
-      }
-    }
-  }, []);
-
-  const addLocalProject = (number: string, address: string) => {
-    if (!number || !address) return;
-    const numClean = number.trim();
-    const addrClean = address.trim();
-    if (!numClean || !addrClean) return;
-
-    const isDefault = DEFAULT_PROJECTS.some(
-      p => p.number.toLowerCase() === numClean.toLowerCase() && p.address.toLowerCase() === addrClean.toLowerCase()
-    );
-    if (isDefault) return;
-
-    setLocalProjects((prev) => {
-      const exists = prev.some(
-        p => p.number.toLowerCase() === numClean.toLowerCase() && p.address.toLowerCase() === addrClean.toLowerCase()
-      );
-      if (exists) return prev;
-      const updated = sortProjects([...prev, { number: numClean, address: addrClean }]);
-      localStorage.setItem('localProjects', JSON.stringify(updated));
-      return updated;
-    });
-  };
-
+  /**
+   * Baustellennummer und Adresse gehören zusammen: Wird das eine Feld
+   * ausgefüllt, ergänzt sich das andere aus dem zentralen Baustellenstamm.
+   */
   const handleFieldSync = (day: string, fieldType: 'number' | 'address', value: string) => {
-    const allProjects = [...DEFAULT_PROJECTS, ...localProjects];
     if (fieldType === 'number') {
-      const match = allProjects.find(p => p.number.toLowerCase() === value.trim().toLowerCase());
+      const match = sites.find(p => p.number.toLowerCase() === value.trim().toLowerCase());
       if (match) {
         const addrInput = document.getElementById(`proj-${day}`) as HTMLInputElement;
         if (addrInput) {
@@ -199,7 +127,7 @@ export default function App() {
         }
       }
     } else {
-      const match = allProjects.find(p => p.address.toLowerCase() === value.trim().toLowerCase());
+      const match = sites.find(p => p.address.toLowerCase() === value.trim().toLowerCase());
       if (match) {
         const numInput = document.getElementById(`num-${day}`) as HTMLInputElement;
         if (numInput) {
@@ -209,29 +137,10 @@ export default function App() {
     }
   };
 
-  const saveInlineProject = () => {
-    if (!newProjectNumber.trim() || !newProjectAddress.trim()) {
-      alert("Bitte fülle beide Felder aus.");
-      return;
-    }
-    addLocalProject(newProjectNumber, newProjectAddress);
-    setIsAddingProject(false);
-    setNewProjectNumber('');
-    setNewProjectAddress('');
-  };
-  
   useEffect(() => {
-    const savedName = localStorage.getItem('userName');
-    if (savedName) setUserName(JSON.parse(savedName));
     const savedHistory = localStorage.getItem('reportHistory');
     if (savedHistory) setReportHistory(JSON.parse(savedHistory));
   }, []);
-
-  const saveName = (firstName: string, lastName: string) => {
-    const name = { firstName, lastName };
-    setUserName(name);
-    localStorage.setItem('userName', JSON.stringify(name));
-  };
 
   const addReportToHistory = (type: 'Wochenbericht' | 'Abnahmeprotokoll', action: 'gespeichert' | 'versendet', detail: string) => {
     const newEntry: ReportHistory = {
@@ -244,26 +153,16 @@ export default function App() {
     setReportHistory(updatedHistory);
     localStorage.setItem('reportHistory', JSON.stringify(updatedHistory));
   };
-  const [weeklyEntries, setWeeklyEntries] = useState<{
-    [key: string]: { entries: { id: string; project: string; projectNumber: string; description: string; hours: number; startTime?: string; endTime?: string; pause?: number }[] }
-  }>({
-    Montag: { entries: [] },
-    Dienstag: { entries: [] },
-    Mittwoch: { entries: [] },
-    Donnerstag: { entries: [] },
-    Freitag: { entries: [] },
-    Samstag: { entries: [] },
-    Sonntag: { entries: [] },
-  });
+  const [weeklyEntries, setWeeklyEntries] = useState<WeeklyEntries>(emptyWeek());
 
   const [weeklyBreaks, setWeeklyBreaks] = useState<Record<string, number>>({
-    Montag: 60,
-    Dienstag: 60,
-    Mittwoch: 60,
-    Donnerstag: 60,
-    Freitag: 60,
-    Samstag: 60,
-    Sonntag: 60,
+    Montag: 0,
+    Dienstag: 0,
+    Mittwoch: 0,
+    Donnerstag: 0,
+    Freitag: 0,
+    Samstag: 0,
+    Sonntag: 0,
   });
 
   const handleDecreaseBreak = (day: string) => {
@@ -282,56 +181,6 @@ export default function App() {
       if (current === 30) return { ...prev, [day]: 60 };
       return prev;
     });
-  };
-
-  const [yearlyLeaveDays, setYearlyLeaveDays] = useState<number>(() => {
-    const stored = localStorage.getItem('yearlyLeaveDays');
-    return stored ? parseInt(stored, 10) : 30;
-  });
-  const [selectedLeaveDates, setSelectedLeaveDates] = useState<string[]>([]);
-  const [leaveCalendarMonth, setLeaveCalendarMonth] = useState<Date>(new Date());
-  const [isLeavePreview, setIsLeavePreview] = useState<boolean>(false);
-
-  const getTakenLeaveDays = () => {
-    return leaveRequests
-      .filter(req => req.employee_id === currentUser?.id && req.status === 'approved' && req.type === 'vacation')
-      .reduce((sum, req) => sum + countWeekdays(req.start_date, req.end_date), 0);
-  };
-
-  const toggleLeaveDate = (date: Date) => {
-    const day = date.getDay();
-    if (day === 0 || day === 6) return;
-    
-    const dateStr = format(date, 'yyyy-MM-dd');
-    const alreadyRequested = leaveRequests.some(req => {
-      if (req.employee_id !== currentUser?.id || req.status === 'rejected') return false;
-      return dateStr >= req.start_date && dateStr <= req.end_date;
-    });
-    if (alreadyRequested) return;
-
-    setSelectedLeaveDates(prev => {
-      if (prev.includes(dateStr)) {
-        return prev.filter(d => d !== dateStr);
-      } else {
-        return [...prev, dateStr];
-      }
-    });
-  };
-
-  const getLeaveCalendarDays = () => {
-    const firstDayOfMonth = new Date(leaveCalendarMonth.getFullYear(), leaveCalendarMonth.getMonth(), 1);
-    const lastDayOfMonth = new Date(leaveCalendarMonth.getFullYear(), leaveCalendarMonth.getMonth() + 1, 0);
-    
-    const startDate = startOfISOWeek(firstDayOfMonth);
-    const endDate = addDays(startOfISOWeek(lastDayOfMonth), 6);
-    
-    const days: Date[] = [];
-    let curr = startDate;
-    while (curr <= endDate) {
-      days.push(curr);
-      curr = addDays(curr, 1);
-    }
-    return days;
   };
 
   const [abnahme, setAbnahme] = useState<{
@@ -357,7 +206,7 @@ export default function App() {
   const [isAbnahmePreview, setIsAbnahmePreview] = useState(false);
 
   const handleAbnahmeFieldSync = (fieldType: 'number' | 'address', value: string) => {
-    const allProjects = [...DEFAULT_PROJECTS, ...localProjects];
+    const allProjects = sites;
     if (fieldType === 'number') {
       const match = allProjects.find(p => p.number.toLowerCase() === value.trim().toLowerCase());
       if (match) {
@@ -403,115 +252,319 @@ export default function App() {
     });
     setIsAbnahmePreview(false);
   };
-  const [currentUser, setCurrentUser] = useState<Employee | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [newReport, setNewReport] = useState<Partial<Report>>({
-    work_days: [{ date: format(new Date(), 'yyyy-MM-dd'), hours: 8 }],
-  });
   const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
   const [signatureAction, setSignatureAction] = useState<'saveW' | 'sendW' | 'saveA' | 'sendA' | null>(null);
   const sigCanvas = React.useRef<SignatureCanvas>(null);
 
-  // Fetch initial data
+  // Stammdaten und eigene Daten laden. Fehler werden angezeigt statt
+  // verschluckt — sonst läuft die App unbemerkt mit leeren Listen.
+  const reloadData = React.useCallback(async () => {
+    if (!currentUser) return;
+    try {
+      const [emp, siteList, leaves, entries] = await Promise.all([
+        fetchEmployees(),
+        fetchSites(),
+        fetchLeaveRequests(),
+        fetchMyReportEntries(currentUser.id),
+      ]);
+      setEmployees(emp);
+      setSites(siteList);
+      setLeaveRequests(leaves);
+      setSavedEntries(entries);
+      setLoadError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLoadError(message);
+      console.error('Daten konnten nicht geladen werden:', message);
+    }
+  }, [currentUser]);
+
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [empRes, projRes, timeRes, leaveRes, reportRes] = await Promise.all([
-          fetch('/api/employees'),
-          fetch('/api/projects'),
-          fetch('/api/time-entries'),
-          fetch('/api/leave-requests'),
-          fetch('/api/reports')
-        ]);
+    reloadData();
+  }, [reloadData]);
 
-        const empData = await empRes.json();
-        setEmployees(empData);
-        setProjects(await projRes.json());
-        setTimeEntries(await timeRes.json());
-        setLeaveRequests(await leaveRes.json());
-        setReports(await reportRes.json());
-
-        // For demo: set first employee as current user
-        if (empData.length > 0) setCurrentUser(empData[0]);
-      } catch (error) {
-        console.error("Error fetching data:", error);
-      }
-    };
-    fetchData();
-  }, []);
-
-  const handleAddTimeEntry = async (entry: Partial<TimeEntry>) => {
+  const handleAddLeaveRequest = async (startDate: string, endDate: string) => {
     if (!currentUser) return;
-    const res = await fetch('/api/time-entries', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...entry, employee_id: currentUser.id })
-    });
-    if (res.ok) {
-      const timeRes = await fetch('/api/time-entries');
-      setTimeEntries(await timeRes.json());
-      setActiveTab('dashboard');
-    }
-  };
-
-  const handleAddLeaveRequest = async (request: Partial<LeaveRequest>) => {
-    if (!currentUser) return;
-    const res = await fetch('/api/leave-requests', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...request, employee_id: currentUser.id })
-    });
-    if (res.ok) {
-      const leaveRes = await fetch('/api/leave-requests');
-      setLeaveRequests(await leaveRes.json());
+    try {
+      await createLeaveRequest(currentUser.id, startDate, endDate);
+      setLeaveRequests(await fetchLeaveRequests());
       setActiveTab('leave');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
     }
   };
 
-  const handleUpdateLeaveStatus = async (id: string, status: string) => {
-    const res = await fetch(`/api/leave-requests/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
-    });
-    if (res.ok) {
-      const leaveRes = await fetch('/api/leave-requests');
-      setLeaveRequests(await leaveRes.json());
+  const handleUpdateLeaveStatus = async (id: string, status: 'approved' | 'rejected') => {
+    try {
+      await decideLeaveRequest(id, status);
+      setLeaveRequests(await fetchLeaveRequests());
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
     }
   };
 
-  const handleCreateReport = async () => {
-    if (!currentUser || !newReport.project_id) return;
+  const handleWithdrawLeaveRequest = async (id: string) => {
+    try {
+      await withdrawLeaveRequest(id);
+      setLeaveRequests(await fetchLeaveRequests());
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Wochenbericht: laden, lokal spiegeln, speichern
+  // -------------------------------------------------------------------------
+
+  const [weekLoading, setWeekLoading] = useState(true);
+
+  // Beim Wechsel von Woche oder Benutzer: erst den lokalen Entwurf, sonst den
+  // gespeicherten Stand aus der Datenbank. Der lokale Entwurf hat Vorrang, weil
+  // er Eingaben enthalten kann, die mangels Netz noch nicht übertragen wurden.
+  useEffect(() => {
+    if (!currentUser) return;
+    let cancelled = false;
+    setWeekLoading(true);
+
+    (async () => {
+      const key = weekKey(selectedWeek);
+
+      let draft: WeekDraft | null = null;
+      try {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as WeekDraft;
+          if (parsed.weekStart === key) draft = parsed;
+        }
+      } catch (e) {
+        console.error('Lokaler Entwurf konnte nicht gelesen werden:', e);
+      }
+
+      let remote: Awaited<ReturnType<typeof loadWeeklyReport>> = null;
+      try {
+        remote = await loadWeeklyReport(currentUser.id, selectedWeek);
+      } catch (e) {
+        console.error('Wochenbericht konnte nicht geladen werden:', e);
+        setSaveState('offline');
+      }
+
+      if (cancelled) return;
+
+      if (draft) {
+        setWeeklyEntries(draft.entries);
+        setWeeklyBreaks(draft.breaks);
+      } else if (remote) {
+        setWeeklyEntries(remote.entries);
+      } else {
+        setWeeklyEntries(emptyWeek());
+      }
+      setWeekLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, selectedWeek]);
+
+  // Jede Änderung sofort lokal sichern. Ohne das war die eingegebene Woche nach
+  // einem Neuladen der Seite verloren.
+  useEffect(() => {
+    if (weekLoading) return;
+    const draft: WeekDraft = {
+      weekStart: weekKey(selectedWeek),
+      entries: weeklyEntries,
+      breaks: weeklyBreaks,
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  }, [weeklyEntries, weeklyBreaks, weekLoading, selectedWeek]);
+
+  const persistWeek = React.useCallback(
+    async (options: { signature?: string | null; sign?: boolean } = {}) => {
+      if (!currentUser) return false;
+      setSaveState('saving');
+      try {
+        await saveWeeklyReport(currentUser.id, selectedWeek, weeklyEntries, sites, options);
+        setSavedEntries(await fetchMyReportEntries(currentUser.id));
+        setSaveState('saved');
+        return true;
+      } catch (error) {
+        console.error('Wochenbericht konnte nicht übertragen werden:', error);
+        // Der lokale Entwurf bleibt bestehen und wird später erneut versucht.
+        setSaveState('offline');
+        return false;
+      }
+    },
+    [currentUser, selectedWeek, weeklyEntries, sites],
+  );
+
+  // Sobald wieder Netz da ist, den lokalen Stand nachreichen.
+  useEffect(() => {
+    const onOnline = () => {
+      if (saveState === 'offline') persistWeek();
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [saveState, persistWeek]);
+
+  const generatePDFBlob = async (type: 'wochenbericht' | 'abnahme', signatures: { employee?: string, customer?: string }) => {
+    const doc = new jsPDF();
     
-    const signature = sigCanvas.current?.getTrimmedCanvas().toDataURL('image/png');
+    // Header
+    doc.setFontSize(10);
+    doc.text("Malermeister Uderstadt GmbH", 20, 15);
+    doc.text("Luisenweg 7, 20537 Hamburg", 20, 20);
     
-    const res = await fetch('/api/reports', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...newReport,
-        employee_id: currentUser.id,
-        signature,
-        status: signature ? 'signed' : 'draft'
-      })
-    });
-
-    if (res.ok) {
-      const reportRes = await fetch('/api/reports');
-      setReports(await reportRes.json());
-      setIsReportModalOpen(false);
-      setNewReport({ work_days: [{ date: format(new Date(), 'yyyy-MM-dd'), hours: 8 }] });
+    try {
+      const img = new Image();
+      const baseUrl = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+      img.src = `${window.location.origin}${baseUrl}logo.png?v=1.0.4`;
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+      
+      const maxWidth = 40;
+      const maxHeight = 20;
+      let logoWidth = maxWidth;
+      let logoHeight = maxHeight;
+      if (img.width && img.height) {
+        const ratio = img.width / img.height;
+        if (ratio > maxWidth / maxHeight) {
+          logoWidth = maxWidth;
+          logoHeight = maxWidth / ratio;
+        } else {
+          logoHeight = maxHeight;
+          logoWidth = maxHeight * ratio;
+        }
+      }
+      const logoX = 190 - logoWidth; // Aligns the right edge to x=190
+      doc.addImage(img, 'PNG', logoX, 10, logoWidth, logoHeight); 
+    } catch (e) {
+      console.error("Failed to load logo.png for PDF generation, using fallback", e);
+      doc.setFontSize(14);
+      doc.text("Malerprofis", 150, 20);
+      doc.setFontSize(10);
     }
+    
+    doc.setFontSize(16);
+    doc.text(type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll', 20, 40);
+    doc.setFontSize(12);
+    doc.text(`Mitarbeiter: ${userName.firstName} ${userName.lastName}`, 20, 50);
+    
+    let currentY = 60;
+    
+    if (type === 'wochenbericht') {
+        const germanDayToOffset: { [key: string]: number } = {
+          Montag: 0,
+          Dienstag: 1,
+          Mittwoch: 2,
+          Donnerstag: 3,
+          Freitag: 4,
+          Samstag: 5,
+          Sonntag: 6,
+        };
+        const tableData = Object.entries(weeklyEntries).flatMap(([day, data]) => {
+          const offset = germanDayToOffset[day] ?? 0;
+          const entryDate = format(addDays(selectedWeek, offset), 'dd.MM.yyyy');
+          return data.entries.map(e => [
+            entryDate, 
+            e.projectNumber || '-', 
+            e.project, 
+            e.description || '-', 
+            e.startTime || '-', 
+            e.endTime || '-', 
+            e.pause !== undefined ? `${e.pause} Min.` : '-', 
+            `${e.hours} h`
+          ]);
+        });
+        autoTable(doc, {
+          startY: currentY,
+          head: [['Datum', 'Nr.', 'Baustelle', 'Beschreibung', 'Startzeit', 'Endzeit', 'Pause', 'Std.']],
+          body: tableData,
+        });
+        currentY = (doc as any).lastAutoTable.finalY + 20;
+        
+        // Signature area
+        doc.text(`Datum: ${format(new Date(), 'dd.MM.yyyy')}`, 20, currentY);
+        doc.text("Unterschrift Mitarbeiter:", 20, currentY + 10);
+        if (signatures.employee) {
+            doc.addImage(signatures.employee, 'PNG', 20, currentY + 15, 50, 20);
+        }
+    } else {
+        doc.text(`Baustelle / Adresse: ${abnahme.address}`, 20, currentY);
+        doc.text(`Baustellennummer: ${abnahme.number}`, 20, currentY + 10);
+        doc.text(`Teilnehmer: ${abnahme.participants.join(', ')}`, 20, currentY + 20);
+        doc.text(`Art der Abnahme: ${abnahme.type === 'teil' ? 'Teilabnahme' : 'Gesamtabnahme'}`, 20, currentY + 30);
+        doc.text(`Status: ${abnahme.status === 'ohne' ? 'Ohne sichtbare Mängel' : 'Mit Mängeln/Restarbeiten'}`, 20, currentY + 40);
+        
+        currentY += 50;
+        if (abnahme.status === 'mit' && abnahme.tasks && abnahme.tasks.length > 0) {
+          doc.text(`Mängel/Kommentar:`, 20, currentY);
+          currentY += 10;
+          
+          abnahme.tasks.forEach((task) => {
+            // Check if text would overflow
+            if (currentY > 275) {
+              doc.addPage();
+              currentY = 20;
+            }
+            doc.text(`- ${task.text}`, 25, currentY);
+            currentY += 7;
+            
+            if (task.photo) {
+              // Check if image would overflow (needs 37.5mm + margin)
+              if (currentY > 230) {
+                doc.addPage();
+                currentY = 20;
+              }
+              try {
+                let formatType = 'JPEG';
+                if (task.photo.includes('image/png')) {
+                  formatType = 'PNG';
+                }
+                doc.addImage(task.photo, formatType, 25, currentY, 50, 37.5);
+                currentY += 42;
+              } catch (e) {
+                console.error("Error drawing photo in PDF:", e);
+                doc.text("[Fehler beim Laden des Fotos]", 25, currentY);
+                currentY += 7;
+              }
+            }
+          });
+          currentY += 5;
+        }
+        
+        // Signature area
+        if (currentY > 240) {
+          doc.addPage();
+          currentY = 20;
+        }
+        
+        doc.text(`Datum: ${format(new Date(), 'dd.MM.yyyy')}`, 20, currentY);
+        doc.text("Unterschrift Mitarbeiter:", 20, currentY + 10);
+        if (signatures.employee) {
+            doc.addImage(signatures.employee, 'PNG', 20, currentY + 15, 50, 20);
+        }
+        
+        doc.text(`Datum: ${format(new Date(), 'dd.MM.yyyy')}`, 120, currentY);
+        doc.text("Unterschrift Kunde:", 120, currentY + 10);
+        if (signatures.customer) {
+            doc.addImage(signatures.customer, 'PNG', 120, currentY + 15, 50, 20);
+        }
+    }
+    
+    return doc.output('blob');
   };
 
-  const handleSaveReport = async (type: 'wochenbericht' | 'abnahme' | 'urlaubsantrag', customSignatures?: { employee?: string, customer?: string }) => {
+  const handleSaveReport = async (type: 'wochenbericht' | 'abnahme', customSignatures?: { employee?: string, customer?: string }) => {
     if (!userName.firstName || !userName.lastName) {
       alert("Bitte geben Sie zuerst Ihren Namen in den Einstellungen ein.");
       return;
     }
     let signatures: { employee?: string, customer?: string } = {};
-    if (type === 'wochenbericht' || type === 'urlaubsantrag') {
+    if (type === 'wochenbericht') {
         if (sigCanvas.current && !sigCanvas.current.isEmpty()) {
             signatures.employee = sigCanvas.current.getCanvas().toDataURL('image/png');
         }
@@ -520,35 +573,29 @@ export default function App() {
         signatures.customer = customSignatures?.customer || abnahme.customerSignature;
     }
 
-    const blob = await generatePDFBlob({ type, signatures, userName, weeklyEntries, selectedWeek, abnahme, yearlyLeaveDays, selectedLeaveDates, getTakenLeaveDays });
+    const blob = await generatePDFBlob(type, signatures);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${type === 'wochenbericht' ? 'Wochenbericht' : type === 'abnahme' ? 'Abnahmeprotokoll' : 'Urlaubsantrag'}.pdf`;
+    a.download = `${type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll'}.pdf`;
     a.click();
     URL.revokeObjectURL(url);
     addReportToHistory(
-      type === 'wochenbericht' ? 'Wochenbericht' : type === 'abnahme' ? 'Abnahmeprotokoll' : 'Urlaubsantrag', 
+      type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll', 
       'gespeichert',
       type === 'wochenbericht' 
         ? `${format(selectedWeek, 'dd.MM.')} - ${format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}`
-        : type === 'abnahme'
-          ? abnahme.number
-          : `${selectedLeaveDates.filter(d => {
-              const date = new Date(d);
-              const day = date.getDay();
-              return day !== 0 && day !== 6;
-            }).length} Tage`
+        : abnahme.number
     );
   };
 
-  const handleSendReport = async (type: 'wochenbericht' | 'abnahme' | 'urlaubsantrag', customSignatures?: { employee?: string, customer?: string }) => {
+  const handleSendReport = async (type: 'wochenbericht' | 'abnahme', customSignatures?: { employee?: string, customer?: string }) => {
     if (!userName.firstName || !userName.lastName) {
       alert("Bitte geben Sie zuerst Ihren Namen in den Einstellungen ein.");
       return;
     }
     let signatures: { employee?: string, customer?: string } = {};
-    if (type === 'wochenbericht' || type === 'urlaubsantrag') {
+    if (type === 'wochenbericht') {
         if (sigCanvas.current && !sigCanvas.current.isEmpty()) {
             signatures.employee = sigCanvas.current.getCanvas().toDataURL('image/png');
         }
@@ -557,108 +604,20 @@ export default function App() {
         signatures.customer = customSignatures?.customer || abnahme.customerSignature;
     }
 
-    const blob = await generatePDFBlob({ type, signatures, userName, weeklyEntries, selectedWeek, abnahme, yearlyLeaveDays, selectedLeaveDates, getTakenLeaveDays });
-    
-    const name = `${userName.firstName} ${userName.lastName}`;
-    let subject = '';
-    let body = '';
-    let filename = '';
-
-    if (type === 'wochenbericht') {
-      const kw = getISOWeek(selectedWeek);
-      const dateRange = `${format(selectedWeek, 'dd.MM.')}-${format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}`;
-      subject = `Wochenbericht KW ${kw} ${name} ${dateRange}`;
-      body = `Moin,\nanbei mein Wochenbericht für die KW ${kw}.\n\nBeste Grüße,\n${name}`;
-      filename = `Wochenbericht_KW${kw}_${userName.firstName}_${userName.lastName}.pdf`;
-    } else if (type === 'abnahme') {
-      const projNum = abnahme.number;
-      subject = `Abnahmeprotokoll ${name} ${projNum}`;
-      body = `Moin,\nanbei das Abnahmeprotokoll für das Projekt ${projNum}.\n\nBeste Grüße,\n${name}`;
-      filename = `Abnahmeprotokoll_${projNum}_${userName.firstName}_${userName.lastName}.pdf`;
-    } else if (type === 'urlaubsantrag') {
-      const thisYear = new Date().getFullYear();
-      const count = selectedLeaveDates.filter(d => {
-        const date = new Date(d);
-        const day = date.getDay();
-        return day !== 0 && day !== 6;
-      }).length;
-      subject = `Urlaubsantrag ${name} ${thisYear}`;
-      
-      let periodsText = '';
-      const sortedDates = [...selectedLeaveDates].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
-      const periods = getContinuousPeriods(sortedDates.map(d => new Date(d)));
-      periods.forEach(p => {
-        const kw = getISOWeek(p.start);
-        const startStr = format(p.start, 'dd.MM.yyyy');
-        const endStr = format(p.end, 'dd.MM.yyyy');
-        const countDays = countWeekdays(p.start, p.end);
-        periodsText += `- KW ${kw} (${startStr} - ${endStr}): ${countDays} Tage\n`;
-      });
-      
-      body = `Moin,\nanbei mein Urlaubsantrag für das Jahr ${thisYear}.\n\nFolgende Zeiträume sind geplant:\n${periodsText}\nInsgesamt: ${count} Tage.\n\nBeste Grüße,\n${name}`;
-      filename = `Urlaubsantrag_${thisYear}_${userName.firstName}_${userName.lastName}.pdf`;
-    }
-
-    const file = new File([blob], filename, { type: 'application/pdf' });
-
-    const fallbackMailTo = (pdfBlob: Blob, pdfFilename: string, emailSubject: string, emailBody: string) => {
-      const url = URL.createObjectURL(pdfBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = pdfFilename;
-      a.click();
-      URL.revokeObjectURL(url);
-
-      alert("Direktes Teilen von Dateien wird auf diesem Gerät/Browser nicht unterstützt.\n\nDer Bericht wurde heruntergeladen. Bitte hänge die Datei manuell an die E-Mail an, die sich jetzt öffnet.");
-
-      window.location.href = `mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+    const blob = await generatePDFBlob(type, signatures);
+    const reader = new FileReader();
+    reader.readAsDataURL(blob);
+    reader.onloadend = () => {
+      const base64data = reader.result;
+      window.location.href = `mailto:?subject=${type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll'}&body=Anbei der Bericht.&attachment=${base64data}`;
     };
-
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({
-          files: [file],
-          title: subject,
-          text: body,
-        });
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          console.error('Share failed:', err);
-          fallbackMailTo(blob, filename, subject, body);
-        }
-      }
-    } else {
-      fallbackMailTo(blob, filename, subject, body);
-    }
-
     addReportToHistory(
-      type === 'wochenbericht' ? 'Wochenbericht' : type === 'abnahme' ? 'Abnahmeprotokoll' : 'Urlaubsantrag', 
+      type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll', 
       'versendet',
       type === 'wochenbericht' 
         ? `${format(selectedWeek, 'dd.MM.')} - ${format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}`
-        : type === 'abnahme'
-          ? abnahme.number
-          : `${selectedLeaveDates.filter(d => {
-              const date = new Date(d);
-              const day = date.getDay();
-              return day !== 0 && day !== 6;
-            }).length} Tage`
+        : abnahme.number
     );
-
-    if (type === 'urlaubsantrag') {
-      const sortedDates = [...selectedLeaveDates].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
-      const periods = getContinuousPeriods(sortedDates.map(d => new Date(d)));
-      for (const p of periods) {
-        await handleAddLeaveRequest({
-          start_date: format(p.start, 'yyyy-MM-dd'),
-          end_date: format(p.end, 'yyyy-MM-dd'),
-          type: 'vacation',
-          status: 'pending'
-        });
-      }
-      setSelectedLeaveDates([]);
-      setIsLeavePreview(false);
-    }
   };
 
   const handleResetWeeklyReport = () => {
@@ -672,38 +631,36 @@ export default function App() {
       Sonntag: { entries: [] },
     });
     setWeeklyBreaks({
-      Montag: 60,
-      Dienstag: 60,
-      Mittwoch: 60,
-      Donnerstag: 60,
-      Freitag: 60,
-      Samstag: 60,
-      Sonntag: 60,
-    });
-
-    const days = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
-    days.forEach(day => {
-      const startInput = document.getElementById(`start-${day}`) as HTMLInputElement;
-      const endInput = document.getElementById(`end-${day}`) as HTMLInputElement;
-      if (startInput) startInput.value = '07:00';
-      if (endInput) endInput.value = '16:30';
+      Montag: 0,
+      Dienstag: 0,
+      Mittwoch: 0,
+      Donnerstag: 0,
+      Freitag: 0,
+      Samstag: 0,
+      Sonntag: 0,
     });
   };
 
-  const handleSignatureConfirm = () => {
-    if (signatureAction === 'saveW') {
-      handleSaveReport('wochenbericht');
-      handleResetWeeklyReport();
-    }
-    else if (signatureAction === 'sendW') {
-      handleSendReport('wochenbericht');
-      handleResetWeeklyReport();
-    }
-    else if (signatureAction === 'saveL') {
-      handleSaveReport('urlaubsantrag');
-    }
-    else if (signatureAction === 'sendL') {
-      handleSendReport('urlaubsantrag');
+  const handleSignatureConfirm = async () => {
+    // Wochenbericht abgeben: unterschreiben und in die Datenbank schreiben.
+    // Ein Versand entfällt — das Büro sieht den Bericht dort direkt.
+    if (signatureAction === 'sendW') {
+      if (!sigCanvas.current || sigCanvas.current.isEmpty()) {
+        alert('Bitte unterschreibe den Bericht.');
+        return;
+      }
+      const signature = sigCanvas.current.getCanvas().toDataURL('image/png');
+      const ok = await persistWeek({ signature, sign: true });
+      addReportToHistory(
+        'Wochenbericht',
+        'gespeichert',
+        `${format(selectedWeek, 'dd.MM.')} - ${format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}`,
+      );
+      alert(
+        ok
+          ? 'Wochenbericht wurde abgegeben.'
+          : 'Keine Verbindung. Der Bericht ist auf dem Gerät gesichert und wird automatisch übertragen, sobald wieder Netz da ist.',
+      );
     }
     else if (signatureAction === 'saveA' || signatureAction === 'sendA') {
         if (signatureStep === 'employee') {
@@ -780,10 +737,11 @@ export default function App() {
       return false;
     })();
 
-    const dailyTimeEntries = timeEntries.filter(entry => entry.employee_id === currentUser?.id && entry.date === dayStr);
-    const hasTimeEntrySick = dailyTimeEntries.some(e => 
-      e.project_name.toLowerCase().includes('krank') || 
-      e.description.toLowerCase().includes('krank')
+    // Bereits gespeicherte Berichtszeilen dieses Tages
+    const dailySavedEntries = savedEntries.filter(entry => entry.date === dayStr);
+    const hasTimeEntrySick = dailySavedEntries.some(e =>
+      (e.sites?.address ?? '').toLowerCase().includes('krank') ||
+      (e.description ?? '').toLowerCase().includes('krank')
     );
 
     if (hasSickLeave || hasDraftSick || hasTimeEntrySick) {
@@ -813,20 +771,24 @@ export default function App() {
       return false;
     })();
 
-    // Check time entries for vacation / flex
-    const hasTimeEntryVacation = dailyTimeEntries.some(e => 
-      e.project_name.toLowerCase().includes('urlaub') || 
-      e.project_name.toLowerCase().includes('flex') ||
-      e.description.toLowerCase().includes('urlaub') ||
-      e.description.toLowerCase().includes('flex')
-    );
+    // Check saved report entries for vacation / flex
+    const hasTimeEntryVacation = dailySavedEntries.some(e => {
+      const address = (e.sites?.address ?? '').toLowerCase();
+      const description = (e.description ?? '').toLowerCase();
+      return (
+        address.includes('urlaub') ||
+        address.includes('flex') ||
+        description.includes('urlaub') ||
+        description.includes('flex')
+      );
+    });
 
     if (hasLeave || hasDraftVacation || hasTimeEntryVacation) {
       return 'leave';
     }
 
     // Check work hours (GRÜN)
-    const totalTimeHours = dailyTimeEntries.reduce((sum, e) => sum + e.duration, 0);
+    const totalTimeHours = dailySavedEntries.reduce((sum, e) => sum + Number(e.hours), 0);
 
     let totalDraftHours = 0;
     if (format(correspondingWeekDayDate, 'yyyy-MM-dd') === dayStr) {
@@ -836,12 +798,7 @@ export default function App() {
       totalDraftHours = draftEntries.reduce((sum, e) => sum + e.hours, 0);
     }
 
-    const hasReportHours = reports.some(r => {
-      if (r.employee_id !== currentUser?.id) return false;
-      return r.work_days?.some(wd => wd.date === dayStr && wd.hours > 0);
-    });
-
-    if (totalTimeHours > 0 || totalDraftHours > 0 || hasReportHours) {
+    if (totalTimeHours > 0 || totalDraftHours > 0) {
       return 'work';
     }
 
@@ -853,39 +810,40 @@ export default function App() {
     { id: 'wochenbericht', label: 'Wochenbericht', icon: Clock },
     { id: 'abnahme', label: 'Abnahme', icon: CheckSquare },
     { id: 'leave', label: 'Urlaub', icon: Calendar },
+    ...(isAdmin ? [{ id: 'admin', label: 'Büro', icon: Users }] : []),
     { id: 'settings', label: 'Einstellungen', icon: Users },
   ];
 
   return (
     <div className="min-h-screen bg-brand-bg text-[#141414] font-sans">
       {/* Sidebar / Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#141414]/10 px-6 py-2 lg:top-0 lg:bottom-auto lg:h-screen lg:w-64 lg:border-t-0 lg:border-r flex lg:flex-col z-50">
-        <div className="hidden lg:flex items-center justify-center py-6 px-4">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#141414]/10 px-6 py-2 md:top-0 md:bottom-auto md:h-screen md:w-64 md:border-t-0 md:border-r flex md:flex-col z-50">
+        <div className="hidden md:flex items-center justify-center py-6 px-4">
           <Logo className="w-48 h-auto" />
         </div>
 
-        <div className="flex flex-1 justify-around lg:flex-col lg:justify-start lg:gap-2">
+        <div className="flex flex-1 justify-around md:flex-col md:justify-start md:gap-2">
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id as any)}
               className={cn(
-                "flex flex-col lg:flex-row items-center gap-1 lg:gap-3 p-2 lg:px-4 lg:py-3 rounded-xl transition-all",
+                "flex flex-col md:flex-row items-center gap-1 md:gap-3 p-2 md:px-4 md:py-3 rounded-xl transition-all",
                 activeTab === item.id 
-                  ? "text-brand-accent1 lg:bg-brand-accent1/10 font-medium" 
+                  ? "text-brand-accent1 md:bg-brand-accent1/10 font-medium" 
                   : "text-[#141414]/50 hover:text-[#141414]"
               )}
             >
               <item.icon size={20} />
-              <span className="text-[10px] lg:text-sm">{item.label}</span>
+              <span className="text-[10px] md:text-sm">{item.label}</span>
             </button>
           ))}
         </div>
       </nav>
 
       {/* Main Content */}
-      <main className="pb-24 lg:pb-0 lg:pl-64 min-h-screen">
-        <header className="sticky top-0 bg-gray-100/80 backdrop-blur-md z-40 px-6 py-3 flex items-center justify-between lg:hidden">
+      <main className="pb-24 md:pb-0 md:pl-64 min-h-screen">
+        <header className="sticky top-0 bg-gray-100/80 backdrop-blur-md z-40 px-6 py-3 flex items-center justify-between md:hidden">
           <Logo className="w-36 h-auto" />
           <div className="w-8 h-8 bg-[#E4E3E0] rounded-full flex items-center justify-center text-xs font-bold">
             {currentUser?.first_name[0]}
@@ -893,6 +851,25 @@ export default function App() {
         </header>
 
         <div className="max-w-5xl mx-auto p-6">
+          {loadError && (
+            <div className="mb-6 text-sm text-red-700 bg-red-50 border border-red-100 rounded-2xl p-4">
+              <p className="font-bold">Daten konnten nicht geladen werden.</p>
+              <p className="mt-1 text-red-600">{loadError}</p>
+              <button
+                onClick={reloadData}
+                className="mt-3 bg-red-100 hover:bg-red-200 text-red-800 font-bold text-xs px-3 py-2 rounded-xl cursor-pointer"
+              >
+                Erneut versuchen
+              </button>
+            </div>
+          )}
+          {saveState === 'offline' && (
+            <div className="mb-6 text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-2xl p-4">
+              Keine Verbindung — deine Eingaben sind auf dem Gerät gesichert und werden automatisch
+              übertragen, sobald wieder Netz da ist.
+            </div>
+          )}
+
           <AnimatePresence mode="wait">
             {activeTab === 'dashboard' && (
               <motion.div
@@ -1029,9 +1006,9 @@ export default function App() {
                         {(() => {
                           const selectedDayStr = format(selectedCalendarDay, 'yyyy-MM-dd');
                           
-                          // 1. Get Time entries
-                          const dayTimeEntries = timeEntries.filter(e => e.employee_id === currentUser?.id && e.date === selectedDayStr);
-                          
+                          // 1. Bereits gespeicherte Berichtszeilen dieses Tages
+                          const dayTimeEntries = savedEntries.filter(e => e.date === selectedDayStr);
+
                           // 2. Get Draft weekly entries if in selectedWeek
                           const isDayInSelectedWeek = format(startOfISOWeek(selectedCalendarDay), 'yyyy-MM-dd') === format(selectedWeek, 'yyyy-MM-dd');
                           const dayDraftEntries = (() => {
@@ -1049,18 +1026,7 @@ export default function App() {
                             return selectedDayStr >= req.start_date && selectedDayStr <= req.end_date;
                           });
 
-                          // 4. Get Report entries containing this day
-                          const dayReportEntries = reports.filter(r => r.employee_id === currentUser?.id).flatMap(r => {
-                            const matchingDays = r.work_days?.filter(wd => wd.date === selectedDayStr && wd.hours > 0) || [];
-                            return matchingDays.map(wd => ({
-                              project_name: r.project_name,
-                              hours: wd.hours,
-                              tasks: r.tasks,
-                              status: r.status
-                            }));
-                          });
-
-                          const hasAnyEntries = dayTimeEntries.length > 0 || dayDraftEntries.length > 0 || dayLeaveRequests.length > 0 || dayReportEntries.length > 0;
+                          const hasAnyEntries = dayTimeEntries.length > 0 || dayDraftEntries.length > 0 || dayLeaveRequests.length > 0;
 
                           if (!hasAnyEntries) {
                             return (
@@ -1113,14 +1079,17 @@ export default function App() {
                                 );
                               })}
 
-                              {/* Time Entries */}
+                              {/* Gespeicherte Berichtszeilen */}
                               {dayTimeEntries.map((e, idx) => (
-                                <div key={`time-${idx}`} className="flex justify-between items-center bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                                <div key={`time-${idx}`} className="flex justify-between items-center bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
                                   <div>
-                                    <p className="font-semibold text-sm text-gray-900">{e.project_name}</p>
-                                    <p className="text-xs text-gray-500">{e.description || 'Keine Notiz'}</p>
+                                    <p className="font-semibold text-sm text-emerald-900">
+                                      {e.sites?.address ?? 'Ohne Baustelle'}{' '}
+                                      <span className="text-[10px] text-emerald-700 font-bold uppercase">(Bericht)</span>
+                                    </p>
+                                    <p className="text-xs text-emerald-600">{e.description || 'Keine Notiz'}</p>
                                   </div>
-                                  <span className="font-mono text-sm font-bold bg-emerald-50 text-emerald-700 px-3 py-1 rounded-xl">{e.duration} Std.</span>
+                                  <span className="font-mono text-sm font-bold bg-emerald-100 text-emerald-800 px-3 py-1 rounded-xl">{e.hours} Std.</span>
                                 </div>
                               ))}
 
@@ -1137,18 +1106,6 @@ export default function App() {
                                 </div>
                               ))}
 
-                              {/* Report Entries */}
-                              {dayReportEntries.map((r, idx) => (
-                                <div key={`report-${idx}`} className="flex justify-between items-center bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
-                                  <div>
-                                    <p className="font-semibold text-sm text-emerald-900">
-                                      {r.project_name} <span className="text-[10px] text-emerald-700 font-bold uppercase">(Bericht)</span>
-                                    </p>
-                                    <p className="text-xs text-emerald-600">{r.tasks || 'Keine Beschreibung'}</p>
-                                  </div>
-                                  <span className="font-mono text-sm font-bold bg-emerald-100 text-emerald-800 px-3 py-1 rounded-xl">{r.hours} Std.</span>
-                                </div>
-                              ))}
                             </div>
                           );
                         })()}
@@ -1167,7 +1124,7 @@ export default function App() {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-6"
               >
-                <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 mb-6">
+                <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 mb-6 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <h2 className="text-2xl font-bold">Wochenbericht</h2>
                     <div className="flex items-center gap-2 self-start sm:self-auto">
@@ -1175,6 +1132,10 @@ export default function App() {
                         <span className="font-medium text-sm sm:text-base">{format(selectedWeek, 'dd.MM.')} - {format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}</span>
                         <button onClick={() => setSelectedWeek(addWeeks(selectedWeek, 1))} className="p-2 rounded-xl bg-gray-100 cursor-pointer hover:bg-gray-200 transition-colors">&gt;</button>
                     </div>
+                  </div>
+                  <div className="flex flex-col md:flex-row md:items-center justify-between">
+                    <p className="text-sm text-[#141414]/50">Gesamtwochenstunden</p>
+                    <p className="text-3xl font-bold text-brand-accent2">{getWeeklyTotal()} Std.</p>
                   </div>
                 </div>
 
@@ -1245,11 +1206,8 @@ export default function App() {
                           onBlur={(e) => handleFieldSync(day, 'number', e.target.value)}
                         />
                         <datalist id={`datalist-num-${day}`}>
-                          {DEFAULT_PROJECTS.map((p, i) => (
-                            <option key={`def-num-${i}`} value={p.number}>{p.address}</option>
-                          ))}
-                          {localProjects.map((p, i) => (
-                            <option key={`loc-num-${i}`} value={p.number}>{p.address}</option>
+                          {sites.map((p) => (
+                            <option key={`num-${p.id}`} value={p.number}>{p.address}</option>
                           ))}
                         </datalist>
 
@@ -1264,11 +1222,8 @@ export default function App() {
                           onBlur={(e) => handleFieldSync(day, 'address', e.target.value)}
                         />
                         <datalist id={`datalist-proj-${day}`}>
-                          {DEFAULT_PROJECTS.map((p, i) => (
-                            <option key={`def-proj-${i}`} value={p.address}>{p.number}</option>
-                          ))}
-                          {localProjects.map((p, i) => (
-                            <option key={`loc-proj-${i}`} value={p.address}>{p.number}</option>
+                          {sites.map((p) => (
+                            <option key={`proj-${p.id}`} value={p.address}>{p.number}</option>
                           ))}
                         </datalist>
 
@@ -1277,11 +1232,11 @@ export default function App() {
                         <div className="flex gap-2">
                           <div className="flex-1">
                             <label className="text-[11px] font-semibold text-[#141414]/40 uppercase tracking-wider block mb-1">Startzeit</label>
-                            <input type="time" id={`start-${day}`} defaultValue="07:00" className="w-full p-3 bg-gray-100 rounded-xl border-none text-sm outline-none" />
+                            <input type="time" id={`start-${day}`} className="w-full p-3 bg-gray-100 rounded-xl border-none text-sm outline-none" />
                           </div>
                           <div className="flex-1">
                             <label className="text-[11px] font-semibold text-[#141414]/40 uppercase tracking-wider block mb-1">Endzeit</label>
-                            <input type="time" id={`end-${day}`} defaultValue="16:30" className="w-full p-3 bg-gray-100 rounded-xl border-none text-sm outline-none" />
+                            <input type="time" id={`end-${day}`} className="w-full p-3 bg-gray-100 rounded-xl border-none text-sm outline-none" />
                           </div>
                         </div>
 
@@ -1357,34 +1312,21 @@ export default function App() {
                             return;
                           }
 
-                          const [startHours, startMins] = startTime.split(':').map(Number);
-                          const [endHours, endMins] = endTime.split(':').map(Number);
-                          let diffMins = (endHours * 60 + endMins) - (startHours * 60 + startMins);
-                          if (diffMins < 0) {
-                            diffMins += 24 * 60; // falls über Mitternacht gearbeitet wurde
-                          }
-                          
                           const breakMins = weeklyBreaks[day] ?? 0;
-                          let netMins = diffMins - breakMins;
-                          if (netMins < 0) netMins = 0;
-                          const hours = Math.round((netMins / 60) * 100) / 100;
+                          const hours = calculateHours(startTime, endTime, breakMins);
 
                           if (hours <= 0) {
                             alert("Die berechnete Arbeitszeit muss größer als 0 sein.");
                             return;
                           }
-                          
+
                           setWeeklyEntries({...weeklyEntries, [day]: { entries: [...(weeklyEntries[day]?.entries || []), { id: Date.now().toString(), project, projectNumber, description, hours, startTime, endTime, pause: breakMins }] }});
-                          
-                          if (projectNumber) {
-                            addLocalProject(projectNumber, project);
-                          }
 
                           (document.getElementById(`proj-${day}`) as HTMLInputElement).value = '';
                           (document.getElementById(`num-${day}`) as HTMLInputElement).value = '';
                           (document.getElementById(`desc-${day}`) as HTMLInputElement).value = '';
-                          (document.getElementById(`start-${day}`) as HTMLInputElement).value = '07:00';
-                          (document.getElementById(`end-${day}`) as HTMLInputElement).value = '16:30';
+                          (document.getElementById(`start-${day}`) as HTMLInputElement).value = '';
+                          (document.getElementById(`end-${day}`) as HTMLInputElement).value = '';
                           
                           setWeeklyBreaks(prev => ({ ...prev, [day]: 0 }));
                         }} className="w-full bg-brand-accent2 text-white p-2 rounded-xl font-bold hover:bg-brand-accent2/90 cursor-pointer">Baustelle hinzufügen</button>
@@ -1392,16 +1334,11 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-                
-                <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-6">
-                  <p className="text-sm font-medium text-[#141414]/50">Gesamtwochenstunden</p>
-                  <p className="text-3xl font-bold text-brand-accent2">{getWeeklyTotal()} Std.</p>
-                </div>
-
                 <div className="flex flex-col sm:flex-row gap-3 pt-6 w-full">
-                  <button onClick={handleResetWeeklyReport} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Abbrechen</button>
-                  <button onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('saveW'); }} className="w-full sm:flex-1 bg-brand-accent2 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent2/90 transition-colors cursor-pointer text-center">Wochenbericht speichern</button>
-                  <button onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('sendW'); }} className="w-full sm:flex-1 bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center">Wochenbericht senden</button>
+                  <button onClick={handleResetWeeklyReport} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Woche leeren</button>
+                  <button onClick={() => handleSaveReport('wochenbericht')} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Als PDF</button>
+                  <button onClick={() => persistWeek()} className="w-full sm:flex-1 bg-brand-accent2 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent2/90 transition-colors cursor-pointer text-center">Entwurf speichern</button>
+                  <button onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('sendW'); }} className="w-full sm:flex-1 bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center">Bericht abgeben</button>
                 </div>
               </motion.div>
             )}
@@ -1436,8 +1373,8 @@ export default function App() {
                             className="w-full p-4 bg-gray-100 rounded-xl text-sm"
                           />
                           <datalist id="datalist-abnahme-num">
-                            {localProjects.map((p, i) => (
-                              <option key={`abnahme-loc-num-${i}`} value={p.number}>{p.address}</option>
+                            {sites.map((p) => (
+                              <option key={`abnahme-num-${p.id}`} value={p.number}>{p.address}</option>
                             ))}
                           </datalist>
                         </div>
@@ -1456,8 +1393,8 @@ export default function App() {
                             className="w-full p-4 bg-gray-100 rounded-xl text-sm"
                           />
                           <datalist id="datalist-abnahme-proj">
-                            {localProjects.map((p, i) => (
-                              <option key={`abnahme-loc-proj-${i}`} value={p.address}>{p.number}</option>
+                            {sites.map((p) => (
+                              <option key={`abnahme-proj-${p.id}`} value={p.address}>{p.number}</option>
                             ))}
                           </datalist>
                         </div>
@@ -1682,9 +1619,6 @@ export default function App() {
                             alert("Bitte gib eine Baustelle / Adresse an.");
                             return;
                           }
-                          if (abnahme.number.trim() && abnahme.address.trim()) {
-                            addLocalProject(abnahme.number, abnahme.address);
-                          }
                           setIsAbnahmePreview(true);
                         }}
                         className="w-full bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center"
@@ -1836,288 +1770,61 @@ export default function App() {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
-                {!isLeavePreview ? (
-                  <>
-                    <h2 className="text-2xl font-bold">Urlaubsplanung</h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-bold">Urlaubsplanung</h2>
+                  <button 
+                    onClick={() => {
+                      const start = prompt("Startdatum (JJJJ-MM-TT):");
+                      const end = prompt("Enddatum (JJJJ-MM-TT):");
+                      if (start && end) handleAddLeaveRequest(start, end);
+                    }}
+                    className="bg-brand-accent1 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2"
+                  >
+                    <Plus size={18} /> Antrag stellen
+                  </button>
+                </div>
 
-                    {/* Stats Cards */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      {/* Jahresurlaub Kachel */}
-                      <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-2 flex flex-col justify-between">
-                        <p className="text-sm font-medium text-[#141414]/50">Jahresurlaub</p>
-                        <div className="flex items-baseline gap-2">
-                          <input 
-                            type="number" 
-                            value={yearlyLeaveDays} 
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value, 10) || 0;
-                              setYearlyLeaveDays(val);
-                              localStorage.setItem('yearlyLeaveDays', val.toString());
-                            }} 
-                            className="text-3xl font-bold text-gray-900 w-20 bg-gray-50 px-2 py-1 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-accent1 text-center"
-                          />
-                          <span className="text-sm font-semibold text-gray-500">Tage</span>
-                        </div>
-                      </div>
-
-                      {/* Genommener Urlaub Kachel */}
-                      <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-2 flex flex-col justify-between">
-                        <p className="text-sm font-medium text-[#141414]/50">Genommener Urlaub</p>
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-3xl font-bold text-brand-accent1">{getTakenLeaveDays()}</span>
-                          <span className="text-sm font-semibold text-gray-500">Tage</span>
-                        </div>
-                      </div>
-
-                      {/* Resturlaub Kachel */}
-                      <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-2 flex flex-col justify-between">
-                        <p className="text-sm font-medium text-[#141414]/50">Resturlaub</p>
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-3xl font-bold text-brand-accent2">{Math.max(0, yearlyLeaveDays - getTakenLeaveDays())}</span>
-                          <span className="text-sm font-semibold text-gray-500">Tage</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Monatskalender Section */}
-                    <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-4">
-                      {/* Month header & navigation */}
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex flex-col">
-                          <h3 className="text-lg font-bold text-[#141414] capitalize">
-                            {format(leaveCalendarMonth, 'MMMM yyyy', { locale: de })}
-                          </h3>
-                        </div>
-                        <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-xl border border-gray-100 shadow-inner">
-                          <button 
-                            type="button"
-                            onClick={() => setLeaveCalendarMonth(prev => subMonths(prev, 1))} 
-                            className="p-1.5 hover:bg-white hover:shadow-sm rounded-lg transition-all text-gray-600 font-bold"
-                            title="Vorheriger Monat"
-                          >
-                            &lt;
-                          </button>
-                          <button 
-                            type="button"
-                            onClick={() => setLeaveCalendarMonth(new Date())} 
-                            className="px-2 py-1 text-[10px] font-bold hover:bg-white hover:shadow-sm rounded-lg transition-all text-gray-500 uppercase"
-                            title="Aktueller Monat"
-                          >
-                            Heute
-                          </button>
-                          <button 
-                            type="button"
-                            onClick={() => setLeaveCalendarMonth(prev => addMonths(prev, 1))} 
-                            className="p-1.5 hover:bg-white hover:shadow-sm rounded-lg transition-all text-gray-600 font-bold"
-                            title="Nächster Monat"
-                          >
-                            &gt;
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Week days header */}
-                      <div className="grid grid-cols-7 gap-1 md:gap-2 text-center">
-                        {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(d => (
-                          <div key={d} className="text-[10px] md:text-xs font-bold text-gray-400 uppercase tracking-wider">
-                            {d}
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Days grid */}
-                      <div className="grid grid-cols-7 gap-2 md:gap-3">
-                        {getLeaveCalendarDays().map((day, idx) => {
-                          const dayStr = format(day, 'yyyy-MM-dd');
-                          const isCurrentMonth = day.getMonth() === leaveCalendarMonth.getMonth() && day.getFullYear() === leaveCalendarMonth.getFullYear();
-                          const isToday = format(day, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
-                          const dayOfWeek = day.getDay();
-                          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-                          
-                          // Check if already requested in DB/state (approved or pending)
-                          const hasExistingRequest = leaveRequests.some(req => {
-                            if (req.employee_id !== currentUser?.id || req.status === 'rejected') return false;
-                            return dayStr >= req.start_date && dayStr <= req.end_date;
-                          });
-
-                          const isSelected = selectedLeaveDates.includes(dayStr);
-
-                          let buttonStyle = "bg-white text-gray-700 border border-gray-200 hover:border-brand-accent1 hover:bg-gray-50 cursor-pointer";
-                          if (!isCurrentMonth) {
-                            buttonStyle = "border border-dashed border-gray-100 text-gray-300 bg-gray-50/10 pointer-events-none";
-                          } else if (hasExistingRequest) {
-                            buttonStyle = "bg-blue-100 text-blue-800 border-blue-200 cursor-not-allowed pointer-events-none";
-                          } else if (isSelected) {
-                            buttonStyle = "bg-brand-accent2 text-white border-brand-accent2 cursor-pointer font-bold shadow-sm shadow-brand-accent2/25";
-                          } else if (isWeekend) {
-                            buttonStyle = "bg-gray-50 text-gray-400 border-gray-100 cursor-not-allowed pointer-events-none";
-                          }
-
-                          return (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => toggleLeaveDate(day)}
-                              className={cn(
-                                "aspect-square w-full max-w-[44px] mx-auto flex flex-col items-center justify-center rounded-full font-semibold text-xs md:text-sm relative transition-all duration-150 outline-none",
-                                buttonStyle
-                              )}
-                            >
-                              <span>{day.getDate()}</span>
-                              {isToday && (
-                                <span className={cn(
-                                  "absolute bottom-1 w-1 h-1 rounded-full",
-                                  isSelected ? "bg-white" : "bg-brand-accent1"
-                                )} />
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Legende */}
-                      <div className="pt-2">
-                        <div className="bg-gray-50/70 p-4 rounded-2xl border border-gray-100/50 flex flex-wrap gap-x-6 gap-y-2 text-xs">
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-blue-100 border border-blue-200" />
-                            <span className="text-gray-600 font-medium">Beantragter / Genommener Urlaub</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-brand-accent2 border border-brand-accent2" />
-                            <span className="text-gray-600 font-medium">Deine aktuelle Auswahl</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-gray-50 border border-gray-100" />
-                            <span className="text-gray-600 font-medium">Wochenende (nicht wählbar)</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Urlaubsantrag Erstellen Button */}
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setIsLeavePreview(true)}
-                        disabled={selectedLeaveDates.length === 0}
-                        className={cn(
-                          "w-full sm:w-auto px-8 py-4 rounded-2xl font-bold transition-all text-center",
-                          selectedLeaveDates.length > 0
-                            ? "bg-brand-accent1 text-white hover:bg-brand-accent1/90 cursor-pointer shadow-lg shadow-brand-accent1/10"
-                            : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                        )}
-                      >
-                        Urlaubsantrag erstellen ({selectedLeaveDates.length} Tage ausgewählt)
-                      </button>
-                    </div>
-
-                    {/* Liste der Anträge */}
-                    <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">
-                      <div className="p-4 bg-[#E4E3E0]/30 border-bottom border-[#141414]/5">
-                        <p className="text-xs font-bold uppercase tracking-widest text-[#141414]/40">Deine Anträge</p>
-                      </div>
-                      {leaveRequests
-                        .filter(r => r.employee_id === currentUser?.id)
-                        .map((req, i) => (
-                        <div key={req.id} className={cn("p-4 flex items-center justify-between", i !== 0 && "border-t border-[#141414]/5")}>
-                          <div>
-                            <p className="font-medium">{format(new Date(req.start_date), 'dd.MM.')} – {format(new Date(req.end_date), 'dd.MM.yyyy')}</p>
-                            <p className="text-xs text-[#141414]/50 capitalize">{req.type}</p>
-                          </div>
-                          <div>
-                            <span className={cn(
-                              "px-3 py-1 rounded-full text-[10px] font-bold uppercase",
-                              req.status === 'approved' ? "bg-emerald-100 text-emerald-700" :
-                              req.status === 'rejected' ? "bg-red-100 text-red-700" :
-                              "bg-amber-100 text-amber-700"
-                            )}>
-                              {req.status === 'approved' ? 'Genehmigt' : req.status === 'rejected' ? 'Abgelehnt' : 'Ausstehend'}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                      {leaveRequests.filter(r => r.employee_id === currentUser?.id).length === 0 && (
-                        <div className="p-12 text-center text-[#141414]/30">
-                          <p>Keine Urlaubsanträge gefunden.</p>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  // Preview View
-                  <div className="space-y-6">
-                    <h2 className="text-2xl font-bold">Vorschau Urlaubsantrag</h2>
-
-                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-4">
-                      <div>
-                        <h3 className="text-lg font-bold text-[#141414] border-b pb-2">Übersicht</h3>
-                        <p className="text-sm text-gray-600 mt-2">Mitarbeiter: <span className="font-semibold text-gray-900">{userName.firstName} {userName.lastName}</span></p>
-                      </div>
-
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2">
-                        <div className="space-y-1">
-                          <p className="text-xs text-[#141414]/50 uppercase font-semibold">Jahresurlaub</p>
-                          <p className="text-lg font-bold text-gray-900">{yearlyLeaveDays} Tage</p>
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs text-[#141414]/50 uppercase font-semibold">Bisher Genommen</p>
-                          <p className="text-lg font-bold text-brand-accent1">{getTakenLeaveDays()} Tage</p>
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs text-[#141414]/50 uppercase font-semibold">Dieser Antrag</p>
-                          <p className="text-lg font-bold text-brand-accent2">{selectedLeaveDates.length} Tage</p>
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs text-[#141414]/50 uppercase font-semibold">Resturlaub danach</p>
-                          <p className="text-lg font-bold text-gray-900">{Math.max(0, yearlyLeaveDays - getTakenLeaveDays() - selectedLeaveDates.length)} Tage</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-4">
-                      <h3 className="text-lg font-bold text-[#141414] border-b pb-2">Geplante Zeiträume</h3>
-                      <div className="space-y-2">
-                        {(() => {
-                          const sortedDates = [...selectedLeaveDates].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
-                          const periods = getContinuousPeriods(sortedDates.map(d => new Date(d)));
-                          return periods.map((p, idx) => {
-                            const kw = getISOWeek(p.start);
-                            const startStr = format(p.start, 'dd.MM.yyyy');
-                            const endStr = format(p.end, 'dd.MM.yyyy');
-                            const count = countWeekdays(p.start, p.end);
-                            return (
-                              <div key={idx} className="p-3 bg-gray-50 rounded-2xl border border-gray-100 flex justify-between items-center text-sm">
-                                <div>
-                                  <span className="font-bold text-brand-accent1 mr-3">KW {kw}</span>
-                                  <span className="text-gray-700">{startStr} – {endStr}</span>
-                                </div>
-                                <span className="font-semibold text-brand-accent2">{count} Tage</span>
-                              </div>
-                            );
-                          });
-                        })()}
-                      </div>
-                    </div>
-
-                    {/* Preview Buttons */}
-                    <div className="flex flex-col sm:flex-row gap-4 pt-6">
-                      <button 
-                        type="button"
-                        onClick={() => setIsLeavePreview(false)} 
-                        className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center"
-                      >
-                        Abbrechen
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('sendL'); }} 
-                        className="w-full sm:flex-1 bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center"
-                      >
-                        Urlaubsantrag senden
-                      </button>
-                    </div>
+                <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">
+                  <div className="p-4 bg-[#E4E3E0]/30 border-bottom border-[#141414]/5">
+                    <p className="text-xs font-bold uppercase tracking-widest text-[#141414]/40">Deine Anträge</p>
                   </div>
-                )}
+                  {leaveRequests
+                    .filter(r => r.employee_id === currentUser?.id)
+                    .map((req, i) => (
+                    <div key={req.id} className={cn("p-4 flex items-center justify-between", i !== 0 && "border-t border-[#141414]/5")}>
+                      <div>
+                        <p className="font-medium">{format(new Date(req.start_date), 'dd.MM.')} – {format(new Date(req.end_date), 'dd.MM.yyyy')}</p>
+                        <p className="text-xs text-[#141414]/50 capitalize">{req.type}</p>
+                      </div>
+                      <div>
+                        <span className={cn(
+                          "px-3 py-1 rounded-full text-[10px] font-bold uppercase",
+                          req.status === 'approved' ? "bg-emerald-100 text-emerald-700" :
+                          req.status === 'rejected' ? "bg-red-100 text-red-700" :
+                          "bg-amber-100 text-amber-700"
+                        )}>
+                          {req.status === 'approved' ? 'Genehmigt' : req.status === 'rejected' ? 'Abgelehnt' : 'Ausstehend'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {leaveRequests.filter(r => r.employee_id === currentUser?.id).length === 0 && (
+                    <div className="p-12 text-center text-[#141414]/30">
+                      <p>Keine Urlaubsanträge gefunden.</p>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'admin' && isAdmin && (
+              <motion.div
+                key="admin"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+              >
+                <AdminPanel employees={employees} sites={sites} onChanged={reloadData} />
               </motion.div>
             )}
 
@@ -2135,127 +1842,52 @@ export default function App() {
                   <h3 className="text-lg font-bold">Profil</h3>
                   <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-4">
                     <div className="space-y-2">
-                      <label className="text-sm font-semibold text-[#141414]/50">Vorname</label>
-                      <input type="text" value={userName.firstName} onChange={(e) => saveName(e.target.value, userName.lastName)} className="w-full p-4 bg-gray-100 rounded-xl" />
+                      <label className="text-sm font-semibold text-[#141414]/50">Name</label>
+                      <p className="w-full p-4 bg-gray-100 rounded-xl font-medium">
+                        {userName.firstName} {userName.lastName}
+                      </p>
+                      <p className="text-xs text-[#141414]/40">
+                        Der Name kommt aus den Stammdaten. Änderungen bitte im Büro melden.
+                      </p>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-semibold text-[#141414]/50">Nachname</label>
-                      <input type="text" value={userName.lastName} onChange={(e) => saveName(userName.firstName, e.target.value)} className="w-full p-4 bg-gray-100 rounded-xl" />
+                      <label className="text-sm font-semibold text-[#141414]/50">Resturlaub</label>
+                      <p className="w-full p-4 bg-gray-100 rounded-xl font-medium">
+                        {currentUser?.remaining_leave_days ?? 0} Tage
+                      </p>
                     </div>
+                    <button
+                      onClick={signOut}
+                      className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-colors cursor-pointer"
+                    >
+                      <LogOut size={18} /> Abmelden
+                    </button>
                   </div>
                 </section>
 
                 <section className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-bold">Gespeicherte Baustellen / Projekte</h3>
-                    <button
-                      onClick={() => {
-                        setIsAddingProject(true);
-                        setNewProjectNumber('');
-                        setNewProjectAddress('');
-                      }}
-                      className="text-xs bg-brand-accent1 text-white px-3 py-1.5 rounded-xl font-bold hover:bg-brand-accent1/90 transition-colors flex items-center gap-1 cursor-pointer"
-                    >
-                      <Plus size={14} /> Hinzufügen
-                    </button>
-                  </div>
+                  <h3 className="text-lg font-bold">Baustellen</h3>
+                  <p className="text-sm text-[#141414]/50">
+                    Die Baustellenliste wird zentral im Büro gepflegt und gilt für alle.
+                  </p>
 
                   <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">
-                    {isAddingProject && (
-                      <div className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 border-b border-[#141414]/5 bg-gray-50/80 animate-fade-in">
-                        <div className="flex-1 flex gap-2">
-                          <input
-                            type="text"
-                            placeholder="Nummer (z. B. 080-7)"
-                            value={newProjectNumber}
-                            onChange={(e) => setNewProjectNumber(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                saveInlineProject();
-                              } else if (e.key === 'Escape') {
-                                setIsAddingProject(false);
-                              }
-                            }}
-                            className="p-2.5 bg-white border border-gray-200 rounded-xl text-sm font-mono w-1/3 outline-none focus:ring-2 focus:ring-brand-accent1"
-                            autoFocus
-                          />
-                          <input
-                            type="text"
-                            placeholder="Baustelle / Adresse"
-                            value={newProjectAddress}
-                            onChange={(e) => setNewProjectAddress(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                saveInlineProject();
-                              } else if (e.key === 'Escape') {
-                                setIsAddingProject(false);
-                              }
-                            }}
-                            className="p-2.5 bg-white border border-gray-200 rounded-xl text-sm flex-1 outline-none focus:ring-2 focus:ring-brand-accent1"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2 self-end sm:self-auto">
-                          <button
-                            onClick={saveInlineProject}
-                            className="px-3 py-1.5 bg-brand-accent1 text-white rounded-xl text-xs font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer"
-                          >
-                            Speichern
-                          </button>
-                          <button
-                            onClick={() => setIsAddingProject(false)}
-                            className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-xl text-xs font-bold hover:bg-gray-300 transition-colors cursor-pointer"
-                          >
-                            Abbrechen
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {localProjects.map((p, idx) => (
-                      <div key={idx} className="p-4 flex items-center justify-between border-b border-[#141414]/5 last:border-none">
+                    {sites.map((p) => (
+                      <div key={p.id} className="p-4 flex items-center justify-between border-b border-[#141414]/5 last:border-none">
                         <div className="flex-1 min-w-0 mr-4">
                           <p className="font-semibold text-sm text-gray-900 truncate">
                             <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs font-mono mr-2">{p.number}</span>
                             {p.address}
                           </p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              const newNum = prompt("Baustellennummer bearbeiten:", p.number);
-                              const newAddr = prompt("Baustelle/Adresse bearbeiten:", p.address);
-                              if (newNum !== null && newAddr !== null && (newNum.trim() !== p.number || newAddr.trim() !== p.address)) {
-                                const updated = [...localProjects];
-                                updated[idx] = { number: newNum.trim(), address: newAddr.trim() };
-                                const sorted = sortProjects(updated);
-                                setLocalProjects(sorted);
-                                localStorage.setItem('localProjects', JSON.stringify(sorted));
-                              }
-                            }}
-                            className="p-2 text-gray-500 hover:text-brand-accent1 hover:bg-gray-50 rounded-xl transition-all cursor-pointer"
-                            title="Bearbeiten"
-                          >
-                            <Edit3 size={16} />
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (confirm(`Möchtest du das Projekt "${p.number} - ${p.address}" wirklich löschen?`)) {
-                                const updated = localProjects.filter((_, i) => i !== idx);
-                                setLocalProjects(updated);
-                                localStorage.setItem('localProjects', JSON.stringify(updated));
-                              }
-                            }}
-                            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
-                            title="Löschen"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
+                        {p.is_absence_code && (
+                          <span className="text-[10px] font-bold uppercase text-gray-400">Abwesenheit</span>
+                        )}
                       </div>
                     ))}
-                    {localProjects.length === 0 && (
+                    {sites.length === 0 && (
                       <div className="p-8 text-center text-[#141414]/30 text-sm">
-                        Keine benutzerdefinierten Baustellen gespeichert. Tippe im Wochenbericht eine neue Baustellennummer und Adresse ein, um sie hier automatisch zu speichern.
+                        Noch keine Baustellen hinterlegt.
                       </div>
                     )}
                   </div>
@@ -2291,7 +1923,7 @@ export default function App() {
                   <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div className="space-y-1">
                       <p className="text-sm font-bold text-gray-900">Malerprofis Uderstadt</p>
-                      <p className="text-xs text-[#141414]/50">Version 1.1.1 (Build 2026.07.17)</p>
+                      <p className="text-xs text-[#141414]/50">Version 1.0.4 (Build 2026.07.13)</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
@@ -2314,145 +1946,6 @@ export default function App() {
         </div>
       </main>
 
-      {/* Report Modal */}
-      <AnimatePresence>
-        {isReportModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl p-8 space-y-6"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold">Stundennachweis erstellen</h2>
-                <button onClick={() => setIsReportModalOpen(false)} className="p-2 hover:bg-gray-100 rounded-full">
-                  <X size={24} />
-                </button>
-              </div>
-
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold uppercase tracking-wider text-[#141414]/50">Projekt</label>
-                  <select 
-                    value={newReport.project_id || ''}
-                    onChange={(e) => setNewReport({ ...newReport, project_id: e.target.value })}
-                    className="w-full p-4 bg-gray-100 rounded-2xl border-none focus:ring-2 focus:ring-brand-accent1"
-                  >
-                    <option value="">Projekt auswählen...</option>
-                    {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-semibold uppercase tracking-wider text-[#141414]/50">Arbeitstage & Stunden</label>
-                    <button 
-                      onClick={() => setNewReport({ 
-                        ...newReport, 
-                        work_days: [...(newReport.work_days || []), { date: format(new Date(), 'yyyy-MM-dd'), hours: 8 }] 
-                      })}
-                      className="text-xs text-brand-accent1 font-bold flex items-center gap-1"
-                    >
-                      <Plus size={14} /> Tag hinzufügen
-                    </button>
-                  </div>
-                  {newReport.work_days?.map((day, idx) => (
-                    <div key={idx} className="grid grid-cols-2 gap-4 items-end">
-                      <input 
-                        type="date" 
-                        value={day.date}
-                        onChange={(e) => {
-                          const days = [...(newReport.work_days || [])];
-                          days[idx].date = e.target.value;
-                          setNewReport({ ...newReport, work_days: days });
-                        }}
-                        className="p-3 bg-gray-100 rounded-xl border-none text-sm"
-                      />
-                      <div className="flex items-center gap-2">
-                        <input 
-                          type="number" 
-                          value={day.hours}
-                          onChange={(e) => {
-                            const days = [...(newReport.work_days || [])];
-                            days[idx].hours = parseFloat(e.target.value);
-                            setNewReport({ ...newReport, work_days: days });
-                          }}
-                          className="p-3 bg-gray-100 rounded-xl border-none text-sm w-full"
-                        />
-                        <button 
-                          onClick={() => {
-                            const days = newReport.work_days?.filter((_, i) => i !== idx);
-                            setNewReport({ ...newReport, work_days: days });
-                          }}
-                          className="p-2 text-red-500"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold uppercase tracking-wider text-[#141414]/50">Aufgaben</label>
-                  <textarea 
-                    value={newReport.tasks || ''}
-                    onChange={(e) => setNewReport({ ...newReport, tasks: e.target.value })}
-                    placeholder="Welche Aufgaben wurden erledigt?"
-                    className="w-full p-4 bg-gray-100 rounded-2xl border-none focus:ring-2 focus:ring-brand-accent1 h-24"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold uppercase tracking-wider text-[#141414]/50">Materialverbrauch</label>
-                  <textarea 
-                    value={newReport.materials || ''}
-                    onChange={(e) => setNewReport({ ...newReport, materials: e.target.value })}
-                    placeholder="Welches Material wurde verbraucht?"
-                    className="w-full p-4 bg-gray-100 rounded-2xl border-none focus:ring-2 focus:ring-brand-accent1 h-24"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold uppercase tracking-wider text-[#141414]/50">Kundenname</label>
-                  <input 
-                    type="text"
-                    value={newReport.customer_name || ''}
-                    onChange={(e) => setNewReport({ ...newReport, customer_name: e.target.value })}
-                    placeholder="Name des Kunden"
-                    className="w-full p-4 bg-gray-100 rounded-2xl border-none focus:ring-2 focus:ring-brand-accent1"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold uppercase tracking-wider text-[#141414]/50">Unterschrift Kunde</label>
-                  <div className="border-2 border-dashed border-[#141414]/10 rounded-2xl overflow-hidden bg-gray-100">
-                    <SignatureCanvas 
-                      ref={sigCanvas}
-                      penColor="#141414"
-                      canvasProps={{ className: 'w-full h-40 cursor-crosshair' }}
-                    />
-                  </div>
-                  <button 
-                    onClick={() => sigCanvas.current?.clear()}
-                    className="text-xs text-[#141414]/40 font-bold uppercase"
-                  >
-                    Löschen
-                  </button>
-                </div>
-
-                <button 
-                  onClick={handleCreateReport}
-                  className="w-full bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors"
-                >
-                  Bericht speichern & abschließen
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

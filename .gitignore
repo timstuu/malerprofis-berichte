@@ -14,3 +14,4 @@ public/icon-512x512.png
 public/logo.png
 .antigravity/
 metadata.json
+.claude/settings.local.json
