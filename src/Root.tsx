@@ -36,7 +36,7 @@ function NotConfigured() {
  * Datenbank überhaupt greifen können.
  */
 function Gate() {
-  const { session, employee, loading, profileMissing, signOut } = useAuth();
+  const { session, employee, loading, profileMissing, profileError, signOut } = useAuth();
 
   if (loading) {
     return (
@@ -48,6 +48,47 @@ function Gate() {
 
   if (!session) {
     return <LoginScreen />;
+  }
+
+  // Ohne geladenes Profil kennt die App die eigene Identität nicht und würde
+  // überall leere Listen zeigen, ohne den Grund zu nennen. Deshalb hier
+  // abfangen statt weiterlaufen.
+  if (profileError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-brand-bg p-6">
+        <div className="w-full max-w-md bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-4">
+          <div className="flex justify-center">
+            <Logo className="h-16 w-auto" />
+          </div>
+          <h1 className="text-lg font-bold text-[#141414] text-center">
+            Daten konnten nicht geladen werden
+          </h1>
+          <p className="text-sm text-gray-500">
+            Die Anmeldung hat geklappt, aber die Mitarbeiterdaten sind nicht abrufbar. Meist fehlen
+            die Zugriffsregeln in der Datenbank — dann muss{' '}
+            <code className="bg-gray-100 px-1 rounded text-xs">0001_init.sql</code> vollständig
+            ausgeführt werden.
+          </p>
+          <p className="text-xs text-gray-400 bg-gray-50 border border-gray-100 rounded-xl p-3 font-mono break-words">
+            {profileError}
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => window.location.reload()}
+              className="flex-1 bg-brand-accent1 hover:bg-brand-accent1/90 text-white font-bold py-3 rounded-xl transition-colors cursor-pointer"
+            >
+              Erneut versuchen
+            </button>
+            <button
+              onClick={signOut}
+              className="flex-1 bg-gray-50 hover:bg-gray-100 border border-gray-100 text-gray-700 font-bold py-3 rounded-xl transition-colors cursor-pointer"
+            >
+              Abmelden
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (profileMissing) {

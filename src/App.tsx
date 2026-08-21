@@ -284,7 +284,10 @@ export default function App() {
       const from = format(subMonths(new Date(), 1), 'yyyy-MM-dd');
       const to = format(addMonths(new Date(), 14), 'yyyy-MM-dd');
 
-      const [emp, siteList, leaves, entries, holidayList, assignments] = await Promise.all([
+      // Bewusst einzeln ausgewertet: Scheitert eine Abfrage, sollen die
+      // übrigen Listen trotzdem gefüllt werden. Zuvor blieb bei einem einzigen
+      // Fehlschlag alles leer — auch die Mitarbeiterliste.
+      const results = await Promise.allSettled([
         fetchEmployees(),
         fetchSites(),
         fetchLeaveRequests(),
@@ -292,13 +295,26 @@ export default function App() {
         fetchHolidays(from, to),
         fetchAssignments(from, to),
       ]);
-      setEmployees(emp);
-      setSites(siteList);
-      setLeaveRequests(leaves);
-      setSavedEntries(entries);
-      setHolidays(holidayList);
-      setNearbyAssignments(assignments);
-      setLoadError(null);
+
+      const [emp, siteList, leaves, entries, holidayList, assignments] = results;
+
+      if (emp.status === 'fulfilled') setEmployees(emp.value);
+      if (siteList.status === 'fulfilled') setSites(siteList.value);
+      if (leaves.status === 'fulfilled') setLeaveRequests(leaves.value);
+      if (entries.status === 'fulfilled') setSavedEntries(entries.value);
+      if (holidayList.status === 'fulfilled') setHolidays(holidayList.value);
+      if (assignments.status === 'fulfilled') setNearbyAssignments(assignments.value);
+
+      const failures = results
+        .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+        .map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)));
+
+      if (failures.length > 0) {
+        console.error('Daten konnten nicht vollständig geladen werden:', failures);
+        setLoadError(failures.join(' · '));
+      } else {
+        setLoadError(null);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setLoadError(message);
