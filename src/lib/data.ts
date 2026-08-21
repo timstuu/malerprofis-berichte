@@ -89,6 +89,12 @@ export async function fetchHolidays(from: string, to: string): Promise<Holiday[]
  * Liefert alle Abwesenheiten, die der angemeldete Benutzer sehen darf: die
  * eigenen in jedem Status und fremde nur, wenn sie genehmigt sind. Die
  * Einschränkung erzwingt die Datenbank, nicht diese Abfrage.
+ *
+ * Hinweis für Erweiterungen: leave_requests verweist zweimal auf employees
+ * (employee_id und decided_by). Wer hier Mitarbeiterdaten mitladen will, muss
+ * die Beziehung benennen — etwa
+ * `employees!leave_requests_employee_id_fkey(first_name)` —, sonst lehnt die
+ * Datenbank die Abfrage als mehrdeutig ab.
  */
 export async function fetchLeaveRequests(): Promise<LeaveRequest[]> {
   return unwrap<LeaveRequest[]>(
@@ -135,7 +141,11 @@ export async function fetchAssignments(from: string, to: string): Promise<Assign
   return unwrap<AssignmentRow[]>(
     await supabase
       .from('assignments')
-      .select('*, sites(number, address), employees(first_name, last_name)')
+      // Die Beziehung muss benannt werden: assignments verweist zweimal auf
+      // employees — einmal auf die Person, die arbeitet (employee_id), und
+      // einmal auf die Person, die geplant hat (created_by). Ohne den Zusatz
+      // weiß die Datenbank nicht, welche der beiden gemeint ist.
+      .select('*, sites(number, address), employees!assignments_employee_id_fkey(first_name, last_name)')
       .gte('date', from)
       .lte('date', to)
       .order('date')
