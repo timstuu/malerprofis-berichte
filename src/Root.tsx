@@ -2,6 +2,7 @@ import { Loader2 } from 'lucide-react';
 import App from './App.tsx';
 import LoginScreen from './components/LoginScreen.tsx';
 import Logo from './components/Logo.tsx';
+import TvBoard from './features/tv/TvBoard.tsx';
 import { AuthProvider, useAuth } from './lib/auth.tsx';
 import { isSupabaseConfigured } from './lib/supabase.ts';
 
@@ -35,7 +36,7 @@ function NotConfigured() {
  * Datenbank überhaupt greifen können.
  */
 function Gate() {
-  const { session, loading, profileMissing, signOut } = useAuth();
+  const { session, employee, loading, profileMissing, signOut } = useAuth();
 
   if (loading) {
     return (
@@ -70,6 +71,17 @@ function Gate() {
         </div>
       </div>
     );
+  }
+
+  // Das Anzeigekonto des Fernsehers kann ohnehin nichts anderes als lesen und
+  // landet deshalb direkt auf der Büroanzeige. Mit #tv lässt sie sich zum
+  // Einrichten auch von einem Büro-Konto aus öffnen.
+  //
+  // Absichtlich über den Adress-Anker statt über einen Pfad: GitHub Pages
+  // liefert für /tv einen 404, weil dort keine Anwendung läuft, die den Pfad
+  // auflösen könnte.
+  if (employee?.role === 'tv' || window.location.hash === '#tv') {
+    return <TvBoard />;
   }
 
   return <App />;

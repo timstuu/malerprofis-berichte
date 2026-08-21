@@ -18,6 +18,7 @@ Daten liegt vollständig in den Row-Level-Security-Regeln der Datenbank.
    - `0002_leave.sql` — Genehmigen, Ablehnen und Krankmeldung als
      Datenbankfunktionen, damit Urlaubskonto und Einsatzplanung nicht
      auseinanderlaufen können
+   - `0003_realtime.sql` — Live-Aktualisierung für die Büroanzeige
 3. Unter **Project Settings → API** die Projekt-URL und den `anon`-Key notieren.
 
 ### 2. Zugangsdaten hinterlegen
@@ -108,6 +109,51 @@ und müssen nicht eingetragen werden.
 „Teilen → Zum Home-Bildschirm" installierten App (ab iOS 16.4) — im Safari-Tab
 existiert die Push-Funktion nicht.
 
+### 5. Büroanzeige (Fernseher) einrichten
+
+**Anzeigekonto anlegen.** Es darf ausschließlich lesen und kommt nirgends an
+Wochenberichte oder Unterschriften:
+
+1. Supabase → **Authentication → Users → Add user**, z. B. `tv@…`, mit Passwort.
+   Die angezeigte UUID kopieren.
+2. Im SQL-Editor:
+
+```sql
+insert into public.employees (id, first_name, last_name, role)
+values ('<UUID>', 'Büro', 'Anzeige', 'tv');
+```
+
+Die Rolle `tv` sorgt dafür, dass das Konto in keiner Mitarbeiterliste und in
+keiner Planung auftaucht.
+
+3. `supabase/migrations/0003_realtime.sql` im SQL-Editor ausführen, sonst wird
+   der Fernseher erst beim nächsten Neuladen aktuell.
+
+**Gerät einrichten.** Empfohlen ist ein kleiner Rechner (Mini-PC oder Raspberry Pi,
+einmalig ca. 100–200 €) am HDMI-Anschluss mit Chrome im Kiosk-Modus:
+
+```
+chrome --kiosk --app=https://timstuu.github.io/malerprofis-berichte/
+```
+
+Einmal mit dem Anzeigekonto anmelden — die Sitzung hält monatelang. Danach
+erscheint automatisch die Büroanzeige.
+
+**Bedienung.** Drei Seiten, die gewählte bleibt stehen:
+
+| Taste | Wirkung |
+|---|---|
+| → / Bild ab / Leertaste | eine Seite weiter |
+| ← / Bild auf | eine Seite zurück |
+| 1 / 2 / 3 | direkt zu Logo / Wochenplanung / Jahresübersicht |
+
+Ein Funk-Presenter für ca. 15 € sendet genau diese Tasten und ersetzt die
+Tastatur. Startseite ist das Logo mit Uhrzeit, damit im Ruhezustand nichts
+Personenbezogenes an der Wand hängt.
+
+Zum Ausprobieren lässt sich die Anzeige auch mit einem Büro-Konto öffnen: an die
+Adresse `#tv` anhängen.
+
 ## Entwicklung
 
 ```bash
@@ -131,7 +177,7 @@ src/
                Regeln — bewusst ohne Datenbankzugriff, damit sie ohne laufende
                Umgebung nachvollziehbar und prüfbar sind (*.test.ts daneben)
   components/  Anmeldebildschirm, Logo
-  features/    Büro-Bereich, Einsatzplanung, Urlaub
+  features/    Büro-Bereich, Einsatzplanung, Urlaub, Büroanzeige (tv/)
   App.tsx      Dashboard, Wochenbericht, Abnahme, Urlaub, Einstellungen
 supabase/
   migrations/  Datenbankschema, Sicherheitsregeln, Genehmigungslogik
