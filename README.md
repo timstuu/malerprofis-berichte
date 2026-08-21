@@ -34,23 +34,42 @@ Für das Deployment dieselben beiden Werte als GitHub-Repository-Secrets
 hinterlegen (**Settings → Secrets and variables → Actions**). Ohne sie baut die
 Action eine App ohne Datenbankzugang.
 
-### 3. Erstes Büro-Konto anlegen
+### 3. Benutzerverwaltung freischalten
 
-Es gibt bewusst keine Selbstregistrierung — Konten legt ausschließlich das Büro an.
+Alle weiteren Benutzer werden **in der App** angelegt — dafür braucht es einmalig
+eine Edge Function. Konten anzulegen erfordert erhöhte Rechte, die im Browser
+nichts zu suchen haben; die Funktion prüft bei jedem Aufruf, ob der Angemeldete
+wirklich ein Büro-Konto ist.
 
-1. In Supabase unter **Authentication → Users → Add user** ein Konto mit E-Mail
-   und Passwort anlegen und die angezeigte User-UUID kopieren.
-2. Im SQL-Editor die zugehörigen Stammdaten anlegen:
+**Edge Functions → Deploy a new function → Via Editor:**
+
+- Name exakt `manage-users`
+- Inhalt von `supabase/functions/manage-users/index.ts` einfügen
+- **Verify JWT eingeschaltet lassen** (anders als bei `send-push` — hier ruft die
+  angemeldete Person selbst auf)
+- *Deploy function*
+
+Secrets sind nicht nötig; die Funktion nutzt ausschließlich die von Supabase
+automatisch bereitgestellten Werte.
+
+### 4. Erstes Büro-Konto anlegen
+
+Einmalig von Hand, weil noch niemand da ist, der es in der App tun könnte:
+
+1. **Authentication → Users → Add user**, E-Mail und Passwort vergeben, die
+   angezeigte UUID kopieren.
+2. Im SQL-Editor:
 
 ```sql
 insert into public.employees (id, first_name, last_name, role)
 values ('<UUID aus Schritt 1>', 'Vorname', 'Nachname', 'admin');
 ```
 
-Ab dann können weitere Mitarbeiter im Büro-Bereich der App gepflegt werden; ihre
-Anmeldekonten entstehen weiterhin unter **Authentication → Users**.
+Ab jetzt läuft alles Weitere über **Büro → Benutzer** in der App: Konten anlegen,
+Rollen vergeben, Passwörter zurücksetzen, Konten deaktivieren oder löschen. Das
+gilt auch für das Anzeigekonto des Fernsehers (Rolle *Anzeige*).
 
-### 4. Benachrichtigungen einrichten (optional)
+### 5. Benachrichtigungen einrichten (optional)
 
 Ohne diese Schritte funktioniert die App vollständig — es kommen lediglich keine
 Push-Nachrichten an, und der Schalter in den Einstellungen erklärt das.
@@ -109,25 +128,15 @@ und müssen nicht eingetragen werden.
 „Teilen → Zum Home-Bildschirm" installierten App (ab iOS 16.4) — im Safari-Tab
 existiert die Push-Funktion nicht.
 
-### 5. Büroanzeige (Fernseher) einrichten
+### 6. Büroanzeige (Fernseher) einrichten
 
-**Anzeigekonto anlegen.** Es darf ausschließlich lesen und kommt nirgends an
-Wochenberichte oder Unterschriften:
+**Anzeigekonto anlegen** — in der App unter **Büro → Benutzer → Benutzer anlegen**,
+Rolle *Anzeige (Fernseher)*. Das Konto darf ausschließlich lesen, kommt nirgends
+an Wochenberichte oder Unterschriften und taucht in keiner Mitarbeiterliste und
+keiner Planung auf.
 
-1. Supabase → **Authentication → Users → Add user**, z. B. `tv@…`, mit Passwort.
-   Die angezeigte UUID kopieren.
-2. Im SQL-Editor:
-
-```sql
-insert into public.employees (id, first_name, last_name, role)
-values ('<UUID>', 'Büro', 'Anzeige', 'tv');
-```
-
-Die Rolle `tv` sorgt dafür, dass das Konto in keiner Mitarbeiterliste und in
-keiner Planung auftaucht.
-
-3. `supabase/migrations/0003_realtime.sql` im SQL-Editor ausführen, sonst wird
-   der Fernseher erst beim nächsten Neuladen aktuell.
+Außerdem muss `supabase/migrations/0003_realtime.sql` ausgeführt sein, sonst wird
+der Fernseher erst beim nächsten Neuladen aktuell.
 
 **Gerät einrichten.** Empfohlen ist ein kleiner Rechner (Mini-PC oder Raspberry Pi,
 einmalig ca. 100–200 €) am HDMI-Anschluss mit Chrome im Kiosk-Modus:
@@ -195,3 +204,8 @@ scripts/       VAPID-Schlüssel erzeugen
 | `tv` | nur lesend, für die Anzeige im Büro |
 
 Diese Grenzen erzwingt die Datenbank, nicht die Oberfläche.
+
+Rollen vergibt das Büro unter **Büro → Benutzer**. Zwei Sicherungen sind fest
+eingebaut, damit sich niemand aussperrt: Die eigenen Büro-Rechte lassen sich
+nicht entziehen, und das letzte Büro-Konto kann weder gelöscht noch
+herabgestuft werden.

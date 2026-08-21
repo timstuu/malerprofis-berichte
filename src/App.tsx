@@ -1948,7 +1948,12 @@ export default function App() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
               >
-                <AdminPanel employees={employees} sites={sites} onChanged={reloadData} />
+                <AdminPanel
+                  employees={employees}
+                  sites={sites}
+                  currentUserId={currentUser?.id ?? ''}
+                  onChanged={reloadData}
+                />
               </motion.div>
             )}
 

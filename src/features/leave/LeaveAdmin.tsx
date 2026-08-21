@@ -206,7 +206,7 @@ export default function LeaveAdmin({
             >
               <option value="">Mitarbeiter wählen …</option>
               {employees
-                .filter((e) => e.active)
+                .filter((e) => e.active && e.role !== 'tv')
                 .map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.first_name} {e.last_name}

@@ -54,13 +54,15 @@ export interface AssignmentRow extends Assignment {
 // Stammdaten
 // ---------------------------------------------------------------------------
 
+/**
+ * Alle Konten, einschließlich des Anzeigekontos für den Fernseher — die
+ * Benutzerverwaltung muss auch dieses bearbeiten können. Wo es um Personen
+ * geht (Planung, Krankmeldung, Fernseher), wird die Rolle `tv` an Ort und
+ * Stelle herausgefiltert.
+ */
 export async function fetchEmployees(): Promise<Employee[]> {
   return unwrap<Employee[]>(
-    await supabase
-      .from('employees')
-      .select('*')
-      .neq('role', 'tv')
-      .order('first_name'),
+    await supabase.from('employees').select('*').order('first_name'),
     'Mitarbeiter',
   );
 }

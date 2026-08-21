@@ -51,7 +51,8 @@ export default function TvBoard() {
         fetchLeaveRequests(),
         fetchHolidays(`${year}-01-01`, `${year}-12-31`),
       ]);
-      setEmployees(emp.filter((e) => e.active));
+      // Das Anzeigekonto selbst ist keine Person und gehört nicht auf den Schirm.
+      setEmployees(emp.filter((e) => e.active && e.role !== 'tv'));
       setAssignments(assign);
       setLeaveRequests(leaves);
       setHolidays(holidayList);

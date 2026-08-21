@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Plus, Trash2, Pencil, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase.ts';
+import UserManagement from './UserManagement.tsx';
 import type { Employee, Site } from '../../lib/database.types.ts';
 
 /**
@@ -13,10 +14,12 @@ import type { Employee, Site } from '../../lib/database.types.ts';
 export default function AdminPanel({
   employees,
   sites,
+  currentUserId,
   onChanged,
 }: {
   employees: Employee[];
   sites: Site[];
+  currentUserId: string;
   onChanged: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
@@ -187,48 +190,47 @@ export default function AdminPanel({
       </section>
 
       {/* --------------------------------------------------------------- */}
-      <section className="space-y-4">
-        <h3 className="text-lg font-bold">Mitarbeiter</h3>
-        <p className="text-sm text-[#141414]/50">
-          Neue Konten werden in Supabase unter „Authentication" angelegt; danach hier die
-          Stammdaten ergänzen. Eine Selbstregistrierung gibt es bewusst nicht.
-        </p>
+      <UserManagement
+        employees={employees}
+        currentUserId={currentUserId}
+        onChanged={onChanged}
+      />
 
+      {/* --------------------------------------------------------------- */}
+      <section className="space-y-4">
+        <h3 className="text-lg font-bold">Urlaubskonten</h3>
         <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">
-          {employees.map((employee) => (
-            <div
-              key={employee.id}
-              className="p-4 flex items-center justify-between border-b border-[#141414]/5 last:border-none"
-            >
-              <div className="flex-1 min-w-0 mr-4">
-                <p className="font-semibold text-sm text-gray-900 truncate">
-                  {employee.first_name} {employee.last_name}
-                </p>
-                <p className="text-xs text-gray-500">
-                  {employee.role === 'admin' ? 'Büro' : 'Maler'} · Resturlaub{' '}
-                  {employee.remaining_leave_days} Tage
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
+          {employees
+            .filter((e) => e.role === 'worker')
+            .map((employee) => (
+              <div
+                key={employee.id}
+                className="p-4 flex items-center justify-between border-b border-[#141414]/5 last:border-none"
+              >
+                <div className="flex-1 min-w-0 mr-4">
+                  <p className="font-semibold text-sm text-gray-900 truncate">
+                    {employee.first_name} {employee.last_name}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Resturlaub {employee.remaining_leave_days} Tage
+                  </p>
+                </div>
                 <button
                   onClick={() => setLeaveDays(employee)}
                   className="text-xs bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-xl font-bold cursor-pointer"
                 >
-                  Urlaub
-                </button>
-                <button
-                  onClick={() => setRole(employee, employee.role === 'admin' ? 'worker' : 'admin')}
-                  className="text-xs bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-xl font-bold cursor-pointer"
-                >
-                  {employee.role === 'admin' ? 'Zu Maler' : 'Zu Büro'}
+                  Ändern
                 </button>
               </div>
-            </div>
-          ))}
-          {employees.length === 0 && (
-            <div className="p-8 text-center text-[#141414]/30 text-sm">Noch keine Mitarbeiter.</div>
+            ))}
+          {employees.filter((e) => e.role === 'worker').length === 0 && (
+            <div className="p-8 text-center text-[#141414]/30 text-sm">Noch keine Maler.</div>
           )}
         </div>
+        <p className="text-xs text-[#141414]/40">
+          Genehmigte Urlaube werden automatisch abgezogen. Hier lässt sich der Stand korrigieren,
+          etwa bei Resttagen aus dem Vorjahr.
+        </p>
       </section>
     </div>
   );
