@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { Plus, Trash2, KeyRound, Loader2, ShieldCheck, Monitor, HardHat, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, KeyRound, Loader2, ShieldCheck, Monitor, HardHat, RefreshCw, Palmtree } from 'lucide-react';
 import { createUser, deleteUser, setUserPassword, setUserRole, suggestPassword } from '../../lib/users.ts';
 import { supabase } from '../../lib/supabase.ts';
 import type { Employee, Role } from '../../lib/database.types.ts';
 
 /**
  * Benutzerverwaltung für das Büro: Konten anlegen, Rechte vergeben,
- * Passwörter zurücksetzen, Konten entfernen.
+ * Resturlaub korrigieren, Passwörter zurücksetzen, Konten entfernen.
  *
  * Maler bekommen diesen Bereich nicht zu sehen — und selbst wenn: Die Edge
  * Function hinter diesen Schaltflächen prüft die Rolle bei jedem Aufruf.
@@ -22,6 +22,13 @@ const ROLE_ICON: Record<Role, typeof ShieldCheck> = {
   admin: ShieldCheck,
   worker: HardHat,
   tv: Monitor,
+};
+
+/** Reihenfolge der Gruppen in der Liste — nicht alphabetisch, sondern nach Rang. */
+const ROLE_ORDER: Record<Role, number> = {
+  admin: 0,
+  worker: 1,
+  tv: 2,
 };
 
 export default function UserManagement({
@@ -143,6 +150,35 @@ export default function UserManagement({
   };
 
   /**
+   * Resturlaub korrigieren. Genehmigte Urlaube zieht die App selbst ab; hier
+   * wird nachgesteuert, etwa bei Resttagen aus dem Vorjahr.
+   */
+  const changeLeaveDays = async (employee: Employee) => {
+    const value = prompt(
+      `Resturlaub für ${employee.first_name} ${employee.last_name} (Tage):`,
+      String(employee.remaining_leave_days),
+    );
+    if (value === null) return;
+
+    const days = Number(value.replace(',', '.'));
+    if (!Number.isFinite(days) || days < 0) {
+      setError('Bitte eine gültige Zahl eingeben.');
+      return;
+    }
+
+    setError(null);
+    setNotice(null);
+    setBusyId(employee.id);
+    const { error: updateError } = await supabase
+      .from('employees')
+      .update({ remaining_leave_days: days })
+      .eq('id', employee.id);
+    if (updateError) setError(updateError.message);
+    else await onChanged();
+    setBusyId(null);
+  };
+
+  /**
    * Deaktivieren statt Löschen: Die Person kann sich nicht mehr in Planung und
    * Listen wiederfinden, ihre Berichte bleiben aber erhalten.
    */
@@ -157,6 +193,14 @@ export default function UserManagement({
     else await onChanged();
     setBusyId(null);
   };
+
+  // Gruppiert nach Art des Benutzers, darin nach Nachname aufsteigend.
+  const sorted = [...employees].sort(
+    (a, b) =>
+      ROLE_ORDER[a.role] - ROLE_ORDER[b.role] ||
+      a.last_name.localeCompare(b.last_name, 'de') ||
+      a.first_name.localeCompare(b.first_name, 'de'),
+  );
 
   return (
     <section className="space-y-4">
@@ -294,77 +338,97 @@ export default function UserManagement({
 
       {/* Bestehende Konten ------------------------------------------- */}
       <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">
-        {employees.map((employee) => {
+        {sorted.map((employee, i) => {
           const Icon = ROLE_ICON[employee.role];
           const isSelf = employee.id === currentUserId;
+          const startsGroup = i === 0 || sorted[i - 1].role !== employee.role;
 
           return (
-            <div
-              key={employee.id}
-              className={`p-4 flex flex-wrap items-center justify-between gap-3 border-b border-[#141414]/5 last:border-none ${
-                employee.active ? '' : 'opacity-50'
-              }`}
-            >
-              <div className="min-w-0 flex items-center gap-3">
-                <Icon size={18} className="text-[#141414]/30 shrink-0" />
-                <div className="min-w-0">
-                  <p className="font-semibold text-sm truncate">
-                    {employee.first_name} {employee.last_name}
-                    {isSelf && <span className="text-xs text-[#141414]/40 font-normal"> (du)</span>}
-                    {!employee.active && (
-                      <span className="text-xs text-[#141414]/40 font-normal"> · deaktiviert</span>
+            <div key={employee.id} className="border-b border-[#141414]/5 last:border-none">
+              {startsGroup && (
+                <p className="px-4 pt-4 pb-1 text-[10px] font-bold uppercase tracking-wider text-[#141414]/40">
+                  {ROLE_LABEL[employee.role]}
+                </p>
+              )}
+              <div
+                className={`p-4 flex flex-wrap items-center justify-between gap-3 ${
+                  employee.active ? '' : 'opacity-50'
+                }`}
+              >
+                <div className="min-w-0 flex items-center gap-3">
+                  <Icon size={18} className="text-[#141414]/30 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="font-semibold text-sm truncate">
+                      {employee.first_name} {employee.last_name}
+                      {isSelf && (
+                        <span className="text-xs text-[#141414]/40 font-normal"> (du)</span>
+                      )}
+                      {!employee.active && (
+                        <span className="text-xs text-[#141414]/40 font-normal"> · deaktiviert</span>
+                      )}
+                    </p>
+                    {employee.role !== 'tv' && (
+                      <p className="text-xs text-[#141414]/50">
+                        Resturlaub {employee.remaining_leave_days} Tage
+                      </p>
                     )}
-                  </p>
-                  <p className="text-xs text-[#141414]/50">
-                    {ROLE_LABEL[employee.role]}
-                    {employee.role === 'worker' && ` · ${employee.remaining_leave_days} Urlaubstage`}
-                  </p>
+                  </div>
                 </div>
-              </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
-                {busyId === employee.id ? (
-                  <Loader2 size={18} className="animate-spin text-brand-accent1" />
-                ) : (
-                  <>
-                    <select
-                      value={employee.role}
-                      onChange={(e) => changeRole(employee, e.target.value as Role)}
-                      disabled={isSelf}
-                      className="text-xs bg-gray-100 rounded-xl px-2 py-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                      title={isSelf ? 'Die eigenen Rechte lassen sich nicht ändern' : 'Rolle ändern'}
-                    >
-                      <option value="worker">Maler</option>
-                      <option value="admin">Büro</option>
-                      <option value="tv">Anzeige</option>
-                    </select>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {busyId === employee.id ? (
+                    <Loader2 size={18} className="animate-spin text-brand-accent1" />
+                  ) : (
+                    <>
+                      <select
+                        value={employee.role}
+                        onChange={(e) => changeRole(employee, e.target.value as Role)}
+                        disabled={isSelf}
+                        className="text-xs bg-gray-100 rounded-xl px-2 py-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={isSelf ? 'Die eigenen Rechte lassen sich nicht ändern' : 'Rolle ändern'}
+                      >
+                        <option value="worker">Maler</option>
+                        <option value="admin">Büro</option>
+                        <option value="tv">Anzeige</option>
+                      </select>
 
-                    <button
-                      onClick={() => resetPassword(employee)}
-                      className="p-2 text-gray-500 hover:text-brand-accent1 hover:bg-gray-50 rounded-xl cursor-pointer"
-                      title="Passwort neu setzen"
-                    >
-                      <KeyRound size={16} />
-                    </button>
+                      {employee.role !== 'tv' && (
+                        <button
+                          onClick={() => changeLeaveDays(employee)}
+                          className="p-2 text-gray-500 hover:text-brand-accent1 hover:bg-gray-50 rounded-xl cursor-pointer"
+                          title="Resturlaub anpassen"
+                        >
+                          <Palmtree size={16} />
+                        </button>
+                      )}
 
-                    <button
-                      onClick={() => toggleActive(employee)}
-                      className="text-xs bg-gray-100 hover:bg-gray-200 px-2.5 py-2 rounded-xl font-bold cursor-pointer"
-                      title="Aus Planung und Listen nehmen, Berichte bleiben erhalten"
-                    >
-                      {employee.active ? 'Deaktivieren' : 'Aktivieren'}
-                    </button>
+                      <button
+                        onClick={() => resetPassword(employee)}
+                        className="p-2 text-gray-500 hover:text-brand-accent1 hover:bg-gray-50 rounded-xl cursor-pointer"
+                        title="Passwort neu setzen"
+                      >
+                        <KeyRound size={16} />
+                      </button>
 
-                    <button
-                      onClick={() => remove(employee)}
-                      disabled={isSelf}
-                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                      title={isSelf ? 'Das eigene Konto lässt sich nicht löschen' : 'Konto löschen'}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </>
-                )}
+                      <button
+                        onClick={() => toggleActive(employee)}
+                        className="text-xs bg-gray-100 hover:bg-gray-200 px-2.5 py-2 rounded-xl font-bold cursor-pointer"
+                        title="Aus Planung und Listen nehmen, Berichte bleiben erhalten"
+                      >
+                        {employee.active ? 'Deaktivieren' : 'Aktivieren'}
+                      </button>
+
+                      <button
+                        onClick={() => remove(employee)}
+                        disabled={isSelf}
+                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                        title={isSelf ? 'Das eigene Konto lässt sich nicht löschen' : 'Konto löschen'}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           );
@@ -377,7 +441,8 @@ export default function UserManagement({
 
       <p className="text-xs text-[#141414]/40">
         Anlegen, Rechte ändern und Löschen prüft die Datenbank zusätzlich selbst — auch wenn jemand
-        die Oberfläche umgeht. Das letzte Büro-Konto lässt sich nicht entfernen.
+        die Oberfläche umgeht. Das letzte Büro-Konto lässt sich nicht entfernen. Über die Palme
+        lässt sich der Resturlaub korrigieren; genehmigte Urlaube zieht die App selbst ab.
       </p>
     </section>
   );

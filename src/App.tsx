@@ -34,7 +34,9 @@ import {
   Edit3,
   RotateCcw,
   Minus,
-  Camera
+  Camera,
+  Palmtree,
+  Settings
 } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 import { motion, AnimatePresence } from 'motion/react';
@@ -47,7 +49,6 @@ import Logo from './components/Logo.tsx';
 import AdminPanel from './features/admin/AdminPanel.tsx';
 import WeekGrid from './features/planning/WeekGrid.tsx';
 import LeaveView from './features/leave/LeaveView.tsx';
-import LeaveAdmin from './features/leave/LeaveAdmin.tsx';
 import PushToggle from './features/leave/PushToggle.tsx';
 import { useAuth } from './lib/auth.tsx';
 import { calculateHours, WEEKDAYS } from './lib/hours.ts';
@@ -936,12 +937,12 @@ export default function App() {
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'wochenbericht', label: 'Wochenbericht', icon: Clock },
-    { id: 'planung', label: 'Planung', icon: Calendar },
+    { id: 'planung', label: 'Wochenplanung', icon: Calendar },
+    { id: 'wochenbericht', label: 'Wochenberichte', icon: Clock },
     { id: 'abnahme', label: 'Abnahme', icon: CheckSquare },
-    { id: 'leave', label: 'Urlaub', icon: Calendar },
-    ...(isAdmin ? [{ id: 'admin', label: 'Büro', icon: Users }] : []),
-    { id: 'settings', label: 'Einstellungen', icon: Users },
+    { id: 'leave', label: 'Urlaub', icon: Palmtree },
+    ...(isAdmin ? [{ id: 'admin', label: 'Verwaltung', icon: Users }] : []),
+    { id: 'settings', label: 'Einstellungen', icon: Settings },
   ];
 
   return (
@@ -1268,7 +1269,7 @@ export default function App() {
               >
                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 mb-6 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <h2 className="text-2xl font-bold">Wochenbericht</h2>
+                    <h2 className="text-2xl font-bold">Wochenberichte</h2>
                     <div className="flex items-center gap-2 self-start sm:self-auto">
                         <button onClick={() => setSelectedWeek(subWeeks(selectedWeek, 1))} className="p-2 rounded-xl bg-gray-100 cursor-pointer hover:bg-gray-200 transition-colors">&lt;</button>
                         <span className="font-medium text-sm sm:text-base">{format(selectedWeek, 'dd.MM.')} - {format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}</span>
@@ -1916,19 +1917,6 @@ export default function App() {
                   onSubmit={handleAddLeaveRequest}
                   onWithdraw={handleWithdrawLeaveRequest}
                 />
-
-                {isAdmin && (
-                  <div className="pt-4 border-t border-[#141414]/10">
-                    <h2 className="text-2xl font-bold mb-6">Abwesenheiten verwalten</h2>
-                    <LeaveAdmin
-                      employees={employees}
-                      leaveRequests={leaveRequests}
-                      holidays={holidays}
-                      assignmentCountInRange={assignmentCountInRange}
-                      onChanged={reloadData}
-                    />
-                  </div>
-                )}
               </motion.div>
             )}
 
@@ -1941,17 +1929,17 @@ export default function App() {
                 className="space-y-6"
               >
                 <div>
-                  <h2 className="text-2xl font-bold">Einsatzplanung</h2>
+                  <h2 className="text-2xl font-bold">Wochenplanung</h2>
                   <p className="text-sm text-[#141414]/50 mt-1">
                     {isAdmin
-                      ? 'Einsätze anlegen und ändern. Die Maler sehen die Planung sofort.'
+                      ? 'Wer ist diese Woche wo. Zum Ändern auf „Bearbeiten“ tippen — die Maler sehen die Planung sofort.'
                       : 'Wer ist diese Woche wo. Geplant wird im Büro.'}
                   </p>
                 </div>
                 <WeekGrid
                   employees={employees}
                   sites={sites}
-                  readOnly={!isAdmin}
+                  canEdit={isAdmin}
                   currentEmployeeId={currentUser?.id}
                 />
               </motion.div>
@@ -1967,6 +1955,9 @@ export default function App() {
                 <AdminPanel
                   employees={employees}
                   sites={sites}
+                  leaveRequests={leaveRequests}
+                  holidays={holidays}
+                  assignmentCountInRange={assignmentCountInRange}
                   currentUserId={currentUser?.id ?? ''}
                   onChanged={reloadData}
                 />
@@ -1983,67 +1974,6 @@ export default function App() {
               >
                 <h2 className="text-2xl font-bold">Einstellungen</h2>
                 
-                <section className="space-y-4">
-                  <h3 className="text-lg font-bold">Profil</h3>
-                  <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-sm font-semibold text-[#141414]/50">Name</label>
-                      <p className="w-full p-4 bg-gray-100 rounded-xl font-medium">
-                        {userName.firstName} {userName.lastName}
-                      </p>
-                      <p className="text-xs text-[#141414]/40">
-                        Der Name kommt aus den Stammdaten. Änderungen bitte im Büro melden.
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-semibold text-[#141414]/50">Resturlaub</label>
-                      <p className="w-full p-4 bg-gray-100 rounded-xl font-medium">
-                        {currentUser?.remaining_leave_days ?? 0} Tage
-                      </p>
-                    </div>
-                    {currentUser && (
-                      <div className="pt-2 border-t border-[#141414]/5">
-                        <PushToggle employeeId={currentUser.id} />
-                      </div>
-                    )}
-
-                    <button
-                      onClick={signOut}
-                      className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-colors cursor-pointer"
-                    >
-                      <LogOut size={18} /> Abmelden
-                    </button>
-                  </div>
-                </section>
-
-                <section className="space-y-4">
-                  <h3 className="text-lg font-bold">Baustellen</h3>
-                  <p className="text-sm text-[#141414]/50">
-                    Die Baustellenliste wird zentral im Büro gepflegt und gilt für alle.
-                  </p>
-
-                  <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">
-                    {sites.map((p) => (
-                      <div key={p.id} className="p-4 flex items-center justify-between border-b border-[#141414]/5 last:border-none">
-                        <div className="flex-1 min-w-0 mr-4">
-                          <p className="font-semibold text-sm text-gray-900 truncate">
-                            <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs font-mono mr-2">{p.number}</span>
-                            {p.address}
-                          </p>
-                        </div>
-                        {p.is_absence_code && (
-                          <span className="text-[10px] font-bold uppercase text-gray-400">Abwesenheit</span>
-                        )}
-                      </div>
-                    ))}
-                    {sites.length === 0 && (
-                      <div className="p-8 text-center text-[#141414]/30 text-sm">
-                        Noch keine Baustellen hinterlegt.
-                      </div>
-                    )}
-                  </div>
-                </section>
-
                 <section className="space-y-4">
                   <h3 className="text-lg font-bold">Berichtshistorie</h3>
                   <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">
@@ -2071,25 +2001,40 @@ export default function App() {
 
                 <section className="space-y-4">
                   <h3 className="text-lg font-bold">App-Info</h3>
-                  <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#141414]/5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div className="space-y-1">
-                      <p className="text-sm font-bold text-gray-900">Malerprofis Uderstadt</p>
-                      <p className="text-xs text-[#141414]/50">Version 1.0.4 (Build 2026.07.13)</p>
+                  <div className="bg-white rounded-3xl shadow-sm border border-[#141414]/5 divide-y divide-[#141414]/5">
+                    <div className="p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                      <div className="space-y-1">
+                        <p className="text-sm font-bold text-gray-900">Malerprofis Uderstadt</p>
+                        <p className="text-xs text-[#141414]/50">Version 1.0.4 (Build 2026.07.13)</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          Auf dem neuesten Stand
+                        </span>
+                        <button
+                          onClick={() => window.location.reload()}
+                          className="text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 px-3 py-2 rounded-xl font-bold transition-colors cursor-pointer"
+                        >
+                          Nach Updates suchen
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        Auf dem neuesten Stand
-                      </span>
-                      <button
-                        onClick={() => window.location.reload()}
-                        className="text-xs bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 px-3 py-2 rounded-xl font-bold transition-colors cursor-pointer"
-                      >
-                        Nach Updates suchen
-                      </button>
-                    </div>
+
+                    {currentUser && (
+                      <div className="p-6">
+                        <PushToggle employeeId={currentUser.id} />
+                      </div>
+                    )}
                   </div>
                 </section>
+
+                <button
+                  onClick={signOut}
+                  className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-4 rounded-2xl transition-colors cursor-pointer"
+                >
+                  <LogOut size={18} /> Abmelden
+                </button>
               </motion.div>
             )}
 

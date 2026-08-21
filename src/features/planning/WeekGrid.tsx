@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { addDays, addWeeks, format, subWeeks } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { ChevronLeft, ChevronRight, Plus, Trash2, Copy, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Trash2, Copy, Loader2, Pencil, Check } from 'lucide-react';
 import { fetchAssignments, type AssignmentRow } from '../../lib/data.ts';
 import {
   copyWeek,
@@ -15,18 +15,20 @@ import type { Employee, Site } from '../../lib/database.types.ts';
 /**
  * Einsatzplanung des Büros: Mitarbeiter als Zeilen, Wochentage als Spalten.
  *
- * Für Maler ist dieselbe Ansicht schreibgeschützt sichtbar (`readOnly`), damit
- * jeder weiß, wer wo ist.
+ * Für Maler ist dieselbe Ansicht schreibgeschützt sichtbar, damit jeder weiß,
+ * wer wo ist. Auch das Büro sieht zuerst nur die Übersicht: Geändert wird erst
+ * nach einem Klick auf „Bearbeiten“ (`canEdit`). Das schützt die Planung vor
+ * versehentlichen Klicks, wenn jemand nur nachschauen wollte.
  */
 export default function WeekGrid({
   employees,
   sites,
-  readOnly = false,
+  canEdit = false,
   currentEmployeeId,
 }: {
   employees: Employee[];
   sites: Site[];
-  readOnly?: boolean;
+  canEdit?: boolean;
   currentEmployeeId?: string;
 }) {
   const [weekStart, setWeekStart] = useState(() => {
@@ -38,7 +40,9 @@ export default function WeekGrid({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ employeeId: string; date: string } | null>(null);
+  const [editMode, setEditMode] = useState(false);
 
+  const readOnly = !canEdit || !editMode;
   const weekEnd = addDays(weekStart, 6);
 
   const load = async () => {
@@ -118,14 +122,40 @@ export default function WeekGrid({
           {loading && <Loader2 size={16} className="animate-spin text-brand-accent1" />}
         </div>
 
-        {!readOnly && (
-          <button
-            onClick={duplicatePreviousWeek}
-            className="flex items-center gap-2 text-xs font-bold bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-xl cursor-pointer"
-          >
-            <Copy size={14} /> Vorwoche übernehmen
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {!readOnly && (
+            <button
+              onClick={duplicatePreviousWeek}
+              className="flex items-center gap-2 text-xs font-bold bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-xl cursor-pointer"
+            >
+              <Copy size={14} /> Vorwoche übernehmen
+            </button>
+          )}
+
+          {canEdit && (
+            <button
+              onClick={() => {
+                setEditing(null);
+                setEditMode((on) => !on);
+              }}
+              className={`flex items-center gap-2 text-xs font-bold px-3 py-2 rounded-xl cursor-pointer ${
+                editMode
+                  ? 'bg-brand-accent1 text-white hover:bg-brand-accent1/90'
+                  : 'bg-gray-100 hover:bg-gray-200'
+              }`}
+            >
+              {editMode ? (
+                <>
+                  <Check size={14} /> Fertig
+                </>
+              ) : (
+                <>
+                  <Pencil size={14} /> Bearbeiten
+                </>
+              )}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
