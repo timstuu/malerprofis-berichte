@@ -85,6 +85,14 @@ export interface LeaveRequest {
   created_at?: string;
 }
 
+/** Ein freier Hinweis für einen Kalendertag, gültig für den ganzen Betrieb. */
+export interface WeekNote {
+  date: string; // yyyy-MM-dd
+  text: string;
+  updated_by: string | null;
+  updated_at?: string;
+}
+
 export interface Holiday {
   date: string;
   name: string;

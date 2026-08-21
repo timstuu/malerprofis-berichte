@@ -1,17 +1,20 @@
 import { useState } from 'react';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { Check, X, Loader2, Thermometer } from 'lucide-react';
-import { approveLeaveRequest, countWorkingDays, recordSickLeave, rejectLeaveRequest } from '../../lib/leave.ts';
+import { Check, X, Loader2 } from 'lucide-react';
+import { approveLeaveRequest, countWorkingDays, rejectLeaveRequest } from '../../lib/leave.ts';
 import type { Employee, Holiday, LeaveRequest } from '../../lib/database.types.ts';
 
 /**
- * Abwesenheiten aus Sicht des Büros: offene Anträge entscheiden und
- * Krankmeldungen erfassen.
+ * Urlaubsanträge aus Sicht des Büros: offene Anträge entscheiden.
  *
  * Eine Genehmigung löscht die geplanten Einsätze des Zeitraums — das ist so
  * gewollt und lässt sich nicht rückgängig machen, deshalb steht die Zahl der
  * betroffenen Einsätze in der Rückfrage.
+ *
+ * Krankmeldungen werden hier bewusst nicht erfasst: Wer krank ist, bekommt in
+ * der Wochenplanung den Abwesenheitscode 050-7 eingetragen. Ein zweiter Weg
+ * für dieselbe Sache hätte nur die Frage aufgeworfen, welcher der richtige ist.
  */
 export default function LeaveAdmin({
   employees,
@@ -28,10 +31,6 @@ export default function LeaveAdmin({
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sickEmployee, setSickEmployee] = useState('');
-  const [sickStart, setSickStart] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [sickEnd, setSickEnd] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [sickBusy, setSickBusy] = useState(false);
 
   const nameOf = (id: string) => {
     const e = employees.find((x) => x.id === id);
@@ -82,29 +81,6 @@ export default function LeaveAdmin({
       setError(e instanceof Error ? e.message : String(e));
     }
     setBusyId(null);
-  };
-
-  const submitSick = async () => {
-    setError(null);
-    if (!sickEmployee) return setError('Bitte einen Mitarbeiter wählen.');
-    if (sickEnd < sickStart) return setError('Das Enddatum liegt vor dem Startdatum.');
-
-    const affected = assignmentCountInRange(sickEmployee, sickStart, sickEnd);
-    const warning =
-      affected > 0
-        ? `\n\n${affected} geplante ${affected === 1 ? 'Einsatz wird' : 'Einsätze werden'} dabei gelöscht.`
-        : '';
-    if (!confirm(`Krankmeldung für ${nameOf(sickEmployee)} erfassen?${warning}`)) return;
-
-    setSickBusy(true);
-    try {
-      await recordSickLeave(sickEmployee, sickStart, sickEnd);
-      await onChanged();
-      setSickEmployee('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-    setSickBusy(false);
   };
 
   return (
@@ -188,56 +164,6 @@ export default function LeaveAdmin({
               Keine offenen Anträge.
             </div>
           )}
-        </div>
-      </section>
-
-      {/* ------------------------------------------------------------- */}
-      <section className="space-y-4">
-        <h3 className="text-lg font-bold flex items-center gap-2">
-          <Thermometer size={18} className="text-red-500" /> Krankmeldung erfassen
-        </h3>
-
-        <div className="bg-white p-5 rounded-3xl shadow-sm border border-[#141414]/5 space-y-3">
-          <div className="flex flex-col sm:flex-row gap-2">
-            <select
-              value={sickEmployee}
-              onChange={(e) => setSickEmployee(e.target.value)}
-              className="p-3 bg-gray-100 rounded-xl text-sm flex-1"
-            >
-              <option value="">Mitarbeiter wählen …</option>
-              {employees
-                .filter((e) => e.active && e.role !== 'tv')
-                .map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.first_name} {e.last_name}
-                  </option>
-                ))}
-            </select>
-            <input
-              type="date"
-              value={sickStart}
-              onChange={(e) => setSickStart(e.target.value)}
-              className="p-3 bg-gray-100 rounded-xl text-sm"
-            />
-            <input
-              type="date"
-              value={sickEnd}
-              min={sickStart}
-              onChange={(e) => setSickEnd(e.target.value)}
-              className="p-3 bg-gray-100 rounded-xl text-sm"
-            />
-            <button
-              onClick={submitSick}
-              disabled={sickBusy}
-              className="bg-red-500 hover:bg-red-600 disabled:opacity-60 text-white px-4 py-3 rounded-xl text-sm font-bold cursor-pointer"
-            >
-              {sickBusy ? '…' : 'Erfassen'}
-            </button>
-          </div>
-          <p className="text-xs text-[#141414]/40">
-            Gilt sofort, ohne Genehmigung, und zehrt nicht am Urlaubskonto. Geplante Einsätze im
-            Zeitraum werden entfernt.
-          </p>
         </div>
       </section>
 

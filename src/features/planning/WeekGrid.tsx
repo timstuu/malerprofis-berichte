@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { addDays, addWeeks, format, subWeeks } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, Plus, Trash2, Copy, Loader2, Pencil, Check } from 'lucide-react';
-import { fetchAssignments, type AssignmentRow } from '../../lib/data.ts';
+import { fetchAssignments, fetchWeekNotes, saveWeekNote, type AssignmentRow } from '../../lib/data.ts';
 import {
   copyWeek,
   createAssignments,
@@ -10,7 +10,8 @@ import {
   expandSeries,
 } from '../../lib/planning.ts';
 import { WEEKDAYS } from '../../lib/hours.ts';
-import type { Employee, Site } from '../../lib/database.types.ts';
+import { sortEmployees } from '../../lib/users.ts';
+import type { Employee, Site, WeekNote } from '../../lib/database.types.ts';
 
 /**
  * Einsatzplanung des Büros: Mitarbeiter als Zeilen, Wochentage als Spalten.
@@ -31,12 +32,16 @@ export default function WeekGrid({
   canEdit?: boolean;
   currentEmployeeId?: string;
 }) {
+  // Ohne angemeldetes Konto lässt sich kein Hinweis speichern; das betrifft
+  // nur den Fernseher, der diese Ansicht ohnehin nicht bearbeitet.
+
   const [weekStart, setWeekStart] = useState(() => {
     const now = new Date();
     const day = (now.getDay() + 6) % 7; // Montag = 0
     return new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
   });
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
+  const [notes, setNotes] = useState<WeekNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ employeeId: string; date: string } | null>(null);
@@ -48,9 +53,12 @@ export default function WeekGrid({
   const load = async () => {
     setLoading(true);
     try {
-      setAssignments(
-        await fetchAssignments(format(weekStart, 'yyyy-MM-dd'), format(weekEnd, 'yyyy-MM-dd')),
-      );
+      const [assign, weekNotes] = await Promise.all([
+        fetchAssignments(format(weekStart, 'yyyy-MM-dd'), format(weekEnd, 'yyyy-MM-dd')),
+        fetchWeekNotes(format(weekStart, 'yyyy-MM-dd'), format(weekEnd, 'yyyy-MM-dd')),
+      ]);
+      setAssignments(assign);
+      setNotes(weekNotes);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -63,7 +71,22 @@ export default function WeekGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekStart]);
 
-  const workers = employees.filter((e) => e.active && e.role !== 'tv');
+  // Dieselbe Reihenfolge wie in der Benutzerverwaltung und am Fernseher.
+  const workers = sortEmployees(employees.filter((e) => e.active && e.role !== 'tv'));
+
+  const noteOn = (date: string) => notes.find((n) => n.date === date)?.text ?? '';
+  const hasNotes = notes.some((n) => n.text.trim().length > 0);
+
+  const storeNote = async (date: string, text: string) => {
+    if (!currentEmployeeId) return;
+    if (text.trim() === noteOn(date)) return; // nichts geändert
+    try {
+      await saveWeekNote(date, text, currentEmployeeId);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const cellAssignments = (employeeId: string, date: string) =>
     assignments.filter((a) => a.employee_id === employeeId && a.date === date);
@@ -182,6 +205,42 @@ export default function WeekGrid({
             </tr>
           </thead>
           <tbody>
+            {/* Hinweiszeile: gilt dem Tag, nicht einer Person — Betriebs-
+                versammlung, Brückentag, Lager zu. Was eine einzelne Person
+                betrifft, gehört als Abwesenheitscode in die Zellen darunter. */}
+            {(!readOnly || hasNotes) && (
+              <tr className="border-t border-[#141414]/5 bg-amber-50/40">
+                <td className="p-3 align-middle">
+                  <p className="text-xs font-bold uppercase tracking-wider text-amber-700/70">
+                    Hinweise
+                  </p>
+                </td>
+                {WEEKDAYS.slice(0, 6).map((day, i) => {
+                  const date = format(addDays(weekStart, i), 'yyyy-MM-dd');
+                  const note = noteOn(date);
+
+                  return (
+                    <td key={day} className="p-2 align-middle">
+                      {readOnly ? (
+                        note && <p className="text-xs text-amber-900 px-1">{note}</p>
+                      ) : (
+                        <input
+                          // Der Schlüssel enthält den gespeicherten Text: Nach
+                          // dem Speichern wird das Feld neu aufgebaut und zeigt
+                          // den Stand aus der Datenbank statt der alten Eingabe.
+                          key={`${date}-${note}`}
+                          defaultValue={note}
+                          onBlur={(e) => storeNote(date, e.target.value)}
+                          placeholder="—"
+                          className="w-full text-xs px-2 py-1.5 bg-white/70 border border-amber-200 rounded-lg placeholder:text-amber-700/25 focus:outline-none focus:border-amber-400"
+                        />
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            )}
+
             {workers.map((employee) => (
               <tr
                 key={employee.id}

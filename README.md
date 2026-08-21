@@ -15,10 +15,13 @@ Daten liegt vollständig in den Row-Level-Security-Regeln der Datenbank.
    - `0001_init.sql` — Tabellen, Sicherheitsregeln, Feiertage Hamburgs
      (2026–2032) und die sechs Abwesenheits-Baustellen
      (`040-7 Feiertag` … `073-7 Mitarbeiterschulung`)
-   - `0002_leave.sql` — Genehmigen, Ablehnen und Krankmeldung als
-     Datenbankfunktionen, damit Urlaubskonto und Einsatzplanung nicht
-     auseinanderlaufen können
+   - `0002_leave.sql` — Genehmigen und Ablehnen als Datenbankfunktionen, damit
+     Urlaubskonto und Einsatzplanung nicht auseinanderlaufen können. Enthält
+     auch `record_sick_leave`; die Funktion wird nicht mehr aufgerufen, die
+     bereits erfassten Krankmeldungen hängen aber an ihr
    - `0003_realtime.sql` — Live-Aktualisierung für die Büroanzeige
+   - `0004_week_notes.sql` — die Hinweiszeile der Wochenplanung. Fehlt sie,
+     zeigt die App einfach keine Hinweise an; sie geht davon nicht kaputt
 3. Unter **Project Settings → API** die Projekt-URL und den `anon`-Key notieren.
 
 ### 2. Zugangsdaten hinterlegen

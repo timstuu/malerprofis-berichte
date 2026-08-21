@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { Plus, Trash2, KeyRound, Loader2, ShieldCheck, Monitor, HardHat, RefreshCw, Palmtree } from 'lucide-react';
-import { createUser, deleteUser, setUserPassword, setUserRole, suggestPassword } from '../../lib/users.ts';
+import {
+  createUser,
+  deleteUser,
+  setUserPassword,
+  setUserRole,
+  sortEmployees,
+  suggestPassword,
+} from '../../lib/users.ts';
 import { supabase } from '../../lib/supabase.ts';
 import type { Employee, Role } from '../../lib/database.types.ts';
 
@@ -22,13 +29,6 @@ const ROLE_ICON: Record<Role, typeof ShieldCheck> = {
   admin: ShieldCheck,
   worker: HardHat,
   tv: Monitor,
-};
-
-/** Reihenfolge der Gruppen in der Liste — nicht alphabetisch, sondern nach Rang. */
-const ROLE_ORDER: Record<Role, number> = {
-  admin: 0,
-  worker: 1,
-  tv: 2,
 };
 
 export default function UserManagement({
@@ -195,12 +195,7 @@ export default function UserManagement({
   };
 
   // Gruppiert nach Art des Benutzers, darin nach Nachname aufsteigend.
-  const sorted = [...employees].sort(
-    (a, b) =>
-      ROLE_ORDER[a.role] - ROLE_ORDER[b.role] ||
-      a.last_name.localeCompare(b.last_name, 'de') ||
-      a.first_name.localeCompare(b.first_name, 'de'),
-  );
+  const sorted = sortEmployees(employees);
 
   return (
     <section className="space-y-4">

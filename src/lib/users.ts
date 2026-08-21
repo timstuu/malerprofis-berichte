@@ -1,5 +1,5 @@
 import { supabase } from './supabase.ts';
-import type { Role } from './database.types.ts';
+import type { Employee, Role } from './database.types.ts';
 
 /**
  * Benutzerverwaltung.
@@ -108,6 +108,37 @@ export async function setUserRole(employeeId: string, role: Role): Promise<void>
 
 export async function setUserPassword(employeeId: string, password: string): Promise<void> {
   await callManageUsers({ action: 'set-password', employeeId, password });
+}
+
+/**
+ * Reihenfolge der Rollen in jeder Personenliste — nach Rang, nicht alphabetisch.
+ */
+const ROLE_ORDER: Record<Role, number> = {
+  admin: 0,
+  worker: 1,
+  tv: 2,
+};
+
+/**
+ * Einheitliche Reihenfolge für alle Personenlisten: erst die Art des Kontos
+ * (Büro, Maler, Anzeige), darin nach Nachname aufsteigend.
+ *
+ * Bewusst an einer Stelle: Benutzerverwaltung, Wochenplanung und der Fernseher
+ * zeigen dieselben Leute. Liefe jede Ansicht nach eigener Regel, stünde dieselbe
+ * Woche auf dem Büroschirm anders sortiert als an der Wand.
+ *
+ * `localeCompare` mit 'de', damit Umlaute dort einsortiert werden, wo man sie
+ * sucht — sonst landet Ötken hinter Zimmermann.
+ */
+export function sortEmployees<T extends Pick<Employee, 'role' | 'first_name' | 'last_name'>>(
+  employees: T[],
+): T[] {
+  return [...employees].sort(
+    (a, b) =>
+      ROLE_ORDER[a.role] - ROLE_ORDER[b.role] ||
+      a.last_name.localeCompare(b.last_name, 'de') ||
+      a.first_name.localeCompare(b.first_name, 'de'),
+  );
 }
 
 /**

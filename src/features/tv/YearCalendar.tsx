@@ -2,23 +2,27 @@ import { useMemo } from 'react';
 import type { Employee, Holiday, LeaveRequest } from '../../lib/database.types.ts';
 
 /**
- * Jahresübersicht der Abwesenheiten für den Büro-Fernseher.
+ * Urlaubsplan des Jahres für den Büro-Fernseher.
  *
  * Ein Jahr hat 365 Spalten — als Tabelle mit lesbaren Zahlen ist das auf einem
  * Bildschirm aus drei Metern Entfernung nicht darstellbar. Stattdessen bekommt
  * jeder Mitarbeiter ein durchgehendes Jahresband: Man erkennt auf einen Blick
  * die Muster (wer ist wann weg, wo überschneidet es sich), und die Monatsraster
  * darüber machen einzelne Zeiträume zuordenbar.
+ *
+ * Bewusst nur Urlaub: Krankheit gehört niemandem an die Bürowand, und der Plan
+ * beantwortet die Frage, für die er aufgehängt wird — wer ist wann eingeplant
+ * und wo wird es eng. Die vor der Umstellung erfassten Krankmeldungen stehen
+ * weiterhin in der Datenbank und werden hier herausgefiltert.
  */
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 
-type DayKind = 'none' | 'vacation' | 'sick' | 'holiday' | 'weekend';
+type DayKind = 'none' | 'vacation' | 'holiday' | 'weekend';
 
 const DAY_COLORS: Record<DayKind, string> = {
   none: 'transparent',
   vacation: '#3981b7', // Markenblau
-  sick: '#dc2626',
   holiday: '#cbd5e1',
   weekend: '#f1f5f9',
 };
@@ -57,25 +61,21 @@ export default function YearCalendar({
     return result;
   }, [year, holidays]);
 
-  /** Abwesenheiten je Mitarbeiter und Tag, vorab aufgelöst. */
+  /** Urlaubstage je Mitarbeiter, vorab aufgelöst. */
   const kindByEmployee = useMemo(() => {
     const map = new Map<string, Map<string, DayKind>>();
 
     for (const employee of employees) {
       const perDay = new Map<string, DayKind>();
       const own = leaveRequests.filter(
-        (r) => r.employee_id === employee.id && r.status === 'approved',
+        (r) => r.employee_id === employee.id && r.status === 'approved' && r.type === 'vacation',
       );
 
       for (const request of own) {
         const cursor = new Date(`${request.start_date}T00:00:00`);
         const end = new Date(`${request.end_date}T00:00:00`);
         while (cursor <= end) {
-          // Krankheit überschreibt Urlaub, falls sich beides überlagert.
-          const date = isoDate(cursor);
-          if (request.type === 'sick' || !perDay.has(date)) {
-            perDay.set(date, request.type === 'sick' ? 'sick' : 'vacation');
-          }
+          perDay.set(isoDate(cursor), 'vacation');
           cursor.setDate(cursor.getDate() + 1);
         }
       }
@@ -161,7 +161,6 @@ export default function YearCalendar({
       <div className="flex items-center justify-center gap-8 pb-2">
         {[
           ['Urlaub', DAY_COLORS.vacation],
-          ['Krank', DAY_COLORS.sick],
           ['Feiertag', DAY_COLORS.holiday],
           ['Wochenende', DAY_COLORS.weekend],
         ].map(([label, color]) => (

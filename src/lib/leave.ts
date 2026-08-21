@@ -5,11 +5,15 @@ import { supabase } from './supabase.ts';
 export { countWorkingDays, overlapsExisting } from './leave-rules.ts';
 
 /**
- * Urlaubsanträge und Krankmeldungen.
+ * Urlaubsanträge.
  *
- * Genehmigen, Ablehnen und das Erfassen einer Krankmeldung laufen über
- * Datenbankfunktionen, nicht über einzelne Schreibbefehle: Status, Urlaubskonto
- * und das Räumen der Einsätze gehören zusammen und dürfen nicht halb passieren.
+ * Genehmigen und Ablehnen laufen über Datenbankfunktionen, nicht über einzelne
+ * Schreibbefehle: Status, Urlaubskonto und das Räumen der Einsätze gehören
+ * zusammen und dürfen nicht halb passieren.
+ *
+ * Krankmeldungen gibt es hier nicht mehr — die stehen als Abwesenheitscode
+ * 050-7 in der Wochenplanung. Die Datenbankfunktion `record_sick_leave` bleibt
+ * bestehen, weil die bereits erfassten Krankmeldungen an ihr hängen.
  */
 
 export async function approveLeaveRequest(id: string): Promise<number> {
@@ -21,17 +25,4 @@ export async function approveLeaveRequest(id: string): Promise<number> {
 export async function rejectLeaveRequest(id: string): Promise<void> {
   const { error } = await supabase.rpc('reject_leave_request', { p_id: id });
   if (error) throw new Error(`Antrag konnte nicht abgelehnt werden: ${error.message}`);
-}
-
-export async function recordSickLeave(
-  employeeId: string,
-  startDate: string,
-  endDate: string,
-): Promise<void> {
-  const { error } = await supabase.rpc('record_sick_leave', {
-    p_employee: employeeId,
-    p_start: startDate,
-    p_end: endDate,
-  });
-  if (error) throw new Error(`Krankmeldung konnte nicht erfasst werden: ${error.message}`);
 }

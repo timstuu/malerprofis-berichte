@@ -8,6 +8,7 @@ import type {
   LeaveRequest,
   LeaveStatus,
   Site,
+  WeekNote,
 } from './database.types.ts';
 
 /**
@@ -152,6 +153,70 @@ export async function fetchAssignments(from: string, to: string): Promise<Assign
       .order('start_time'),
     'Einsatzplanung',
   );
+}
+
+// ---------------------------------------------------------------------------
+// Hinweise zur Woche
+// ---------------------------------------------------------------------------
+
+/**
+ * Fehlt die Tabelle `week_notes` noch, ist das kein Fehler, sondern der
+ * Normalzustand direkt nach einem Deployment: Die App liegt auf GitHub Pages
+ * und ist sofort aktuell, das dazugehörige SQL wird von Hand im Supabase-Editor
+ * ausgeführt. Zwischen beidem liegen im Zweifel Minuten, in denen sonst jeder
+ * im Büro eine rote Fehlermeldung auf dem Planungsschirm hätte.
+ *
+ * Nach der Migration greift der Normalfall von selbst — nichts weiter zu tun.
+ */
+function isMissingTable(error: { code?: string; message: string }): boolean {
+  return (
+    error.code === '42P01' || // Postgres: relation does not exist
+    error.code === 'PGRST205' || // PostgREST: nicht im Schema-Cache
+    /week_notes/.test(error.message)
+  );
+}
+
+export async function fetchWeekNotes(from: string, to: string): Promise<WeekNote[]> {
+  const { data, error } = await supabase
+    .from('week_notes')
+    .select('*')
+    .gte('date', from)
+    .lte('date', to)
+    .order('date');
+
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw new Error(`Hinweise konnten nicht geladen werden: ${error.message}`);
+  }
+  return (data ?? []) as WeekNote[];
+}
+
+/**
+ * Setzt den Hinweis eines Tages. Ein leerer Text löscht ihn, statt eine leere
+ * Zeile zu hinterlassen — sonst stünde auf dem Fernseher eine Hinweiszeile, in
+ * der nichts steht.
+ */
+export async function saveWeekNote(date: string, text: string, employeeId: string): Promise<void> {
+  const trimmed = text.trim();
+
+  const { error } = trimmed
+    ? await supabase
+        .from('week_notes')
+        .upsert(
+          { date, text: trimmed, updated_by: employeeId, updated_at: new Date().toISOString() },
+          { onConflict: 'date' },
+        )
+    : await supabase.from('week_notes').delete().eq('date', date);
+
+  if (error) {
+    if (isMissingTable(error)) {
+      throw new Error(
+        'Die Hinweiszeile ist in der Datenbank noch nicht angelegt. Bitte einmalig ' +
+          'supabase/migrations/0004_week_notes.sql im Supabase-SQL-Editor ausführen.',
+      );
+    }
+    throw new Error(`Hinweis konnte nicht gespeichert werden: ${error.message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------

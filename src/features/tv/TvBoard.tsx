@@ -2,11 +2,19 @@ import { useCallback, useEffect, useState } from 'react';
 import { addDays, format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { supabase } from '../../lib/supabase.ts';
-import { fetchAssignments, fetchEmployees, fetchHolidays, fetchLeaveRequests, type AssignmentRow } from '../../lib/data.ts';
+import {
+  fetchAssignments,
+  fetchEmployees,
+  fetchHolidays,
+  fetchLeaveRequests,
+  fetchWeekNotes,
+  type AssignmentRow,
+} from '../../lib/data.ts';
 import { WEEKDAYS } from '../../lib/hours.ts';
+import { sortEmployees } from '../../lib/users.ts';
 import Logo from '../../components/Logo.tsx';
 import YearCalendar from './YearCalendar.tsx';
-import type { Employee, Holiday, LeaveRequest } from '../../lib/database.types.ts';
+import type { Employee, Holiday, LeaveRequest, WeekNote } from '../../lib/database.types.ts';
 
 /**
  * Anzeige für den Fernseher im Büro.
@@ -35,6 +43,7 @@ export default function TvBoard() {
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [weekNotes, setWeekNotes] = useState<WeekNote[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
@@ -42,7 +51,7 @@ export default function TvBoard() {
 
   const load = useCallback(async () => {
     try {
-      const [emp, assign, leaves, holidayList] = await Promise.all([
+      const [emp, assign, leaves, holidayList, notes] = await Promise.all([
         fetchEmployees(),
         fetchAssignments(
           format(weekStart, 'yyyy-MM-dd'),
@@ -50,12 +59,19 @@ export default function TvBoard() {
         ),
         fetchLeaveRequests(),
         fetchHolidays(`${year}-01-01`, `${year}-12-31`),
+        fetchWeekNotes(
+          format(weekStart, 'yyyy-MM-dd'),
+          format(addDays(weekStart, 6), 'yyyy-MM-dd'),
+        ),
       ]);
       // Das Anzeigekonto selbst ist keine Person und gehört nicht auf den Schirm.
-      setEmployees(emp.filter((e) => e.active && e.role !== 'tv'));
+      // Dieselbe Reihenfolge wie im Büro — sonst sucht man an der Wand an einer
+      // anderen Stelle als auf dem Planungsschirm.
+      setEmployees(sortEmployees(emp.filter((e) => e.active && e.role !== 'tv')));
       setAssignments(assign);
       setLeaveRequests(leaves);
       setHolidays(holidayList);
+      setWeekNotes(notes);
       setUpdatedAt(new Date());
       setError(null);
     } catch (e) {
@@ -75,6 +91,7 @@ export default function TvBoard() {
       .channel('tv-board')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'assignments' }, () => load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'week_notes' }, () => load())
       .subscribe();
 
     const timer = window.setInterval(load, 30 * 60 * 1000);
@@ -134,11 +151,12 @@ export default function TvBoard() {
           assignments={assignments}
           leaveRequests={leaveRequests}
           holidays={holidays}
+          weekNotes={weekNotes}
         />
       )}
       {page === 2 && (
         <div className="h-screen flex flex-col p-[2vw]">
-          <h1 className="text-[2.6vw] font-bold mb-2">Abwesenheiten {year}</h1>
+          <h1 className="text-[2.6vw] font-bold mb-2">Urlaubsplan {year}</h1>
           <div className="flex-1 min-h-0">
             <YearCalendar
               year={year}
@@ -194,12 +212,14 @@ export function WeekPage({
   assignments,
   leaveRequests,
   holidays,
+  weekNotes = [],
 }: {
   weekStart: Date;
   employees: Employee[];
   assignments: AssignmentRow[];
   leaveRequests: LeaveRequest[];
   holidays: Holiday[];
+  weekNotes?: WeekNote[];
 }) {
   const days = WEEKDAYS.slice(0, 5).map((label, index) => {
     const date = addDays(weekStart, index);
@@ -210,8 +230,14 @@ export function WeekPage({
       iso,
       isToday: iso === format(new Date(), 'yyyy-MM-dd'),
       holiday: holidays.find((h) => h.date === iso),
+      note: weekNotes.find((n) => n.date === iso)?.text ?? null,
     };
   });
+
+  // Die Hinweiszeile erscheint nur, wenn sie etwas zu sagen hat. Der Fernseher
+  // rechnet mit fester Höhe: Eine dauerhaft leere Zeile nähme jeder
+  // Mitarbeiterzeile Platz weg, den sie für die Baustellennamen braucht.
+  const hasNotes = days.some((day) => day.note);
 
   const absenceOn = (employeeId: string, iso: string) =>
     leaveRequests.find(
@@ -248,6 +274,27 @@ export function WeekPage({
             </div>
           ))}
         </div>
+
+        {/* Hinweise zum Tag — gilt dem Betrieb, nicht einer Person */}
+        {hasNotes && (
+          <div className="flex gap-[0.6vw] mb-[0.8vh]">
+            <div className="w-[13vw] shrink-0 flex items-center pr-2">
+              <p className="text-[1.1vw] uppercase tracking-wider text-white/35">Hinweise</p>
+            </div>
+            {days.map((day) => (
+              <div
+                key={day.iso}
+                className={`flex-1 min-w-0 rounded-lg px-[0.5vw] py-[0.7vh] flex items-center ${
+                  day.note ? 'bg-brand-accent2/25' : 'bg-white/[0.03]'
+                }`}
+              >
+                {day.note && (
+                  <p className="text-[1.1vw] leading-[1.2] line-clamp-2">{day.note}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Eine Zeile je Mitarbeiter */}
         <div className="flex-1 flex flex-col gap-[0.6vh] min-h-0">
