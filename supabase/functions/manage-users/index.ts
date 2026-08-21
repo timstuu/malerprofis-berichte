@@ -75,10 +75,23 @@ function db() {
   return adminClient;
 }
 
+/**
+ * Vor jedem Aufruf aus dem Browser fragt dieser mit OPTIONS um Erlaubnis
+ * (Preflight). Ohne diese Kopfzeilen bricht der Browser ab, bevor die
+ * eigentliche Anfrage überhaupt losgeschickt wird — in der App sieht das aus
+ * wie „keine Verbindung", obwohl die Funktion einwandfrei läuft.
+ */
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Max-Age': '86400',
+};
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   });
 
 /** Wer ruft auf — und ist es ein Büro-Konto? */
@@ -131,6 +144,10 @@ Deno.serve(async (req) => {
 });
 
 async function handle(req: Request): Promise<Response> {
+  // Preflight beantworten, bevor irgendetwas anderes geprüft wird.
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
   if (req.method !== 'POST') return json({ error: 'Nur POST.' }, 405);
 
   const caller = await requireAdmin(req);

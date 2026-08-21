@@ -50,9 +50,14 @@ async function callManageUsers<T>(payload: ManageUsersPayload): Promise<T> {
       body: JSON.stringify(payload),
     });
   } catch {
+    // Ein Fehler bereits beim Verbindungsaufbau. Häufigste Ursache ist nicht
+    // die Internetverbindung, sondern eine veraltete Fassung der Edge Function
+    // ohne CORS-Behandlung: Der Browser bricht dann schon beim Preflight ab.
     throw new Error(
-      'Die Benutzerverwaltung ist nicht erreichbar. Entweder fehlt die Internetverbindung, ' +
-        'oder die Edge Function „manage-users" wurde noch nicht angelegt (siehe README).',
+      'Die Benutzerverwaltung konnte nicht aufgerufen werden. Meist ist die Edge Function ' +
+        '„manage-users" im Supabase-Dashboard veraltet — bitte den aktuellen Stand aus ' +
+        'supabase/functions/manage-users/index.ts erneut einfügen und veröffentlichen. ' +
+        'Andernfalls fehlt die Internetverbindung.',
     );
   }
 
