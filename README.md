@@ -49,8 +49,17 @@ wirklich ein Büro-Konto ist.
   angemeldete Person selbst auf)
 - *Deploy function*
 
-Secrets sind nicht nötig; die Funktion nutzt ausschließlich die von Supabase
-automatisch bereitgestellten Werte.
+Normalerweise sind keine Secrets nötig — die Funktion nutzt die von Supabase
+bereitgestellten Werte.
+
+**Falls beim Anlegen eines Benutzers „Kein geheimer Schlüssel in der Umgebung
+gefunden" erscheint:** Supabase hat die Schlüsselnamen umgestellt, und in
+neueren Projekten steht der geheime Schlüssel nicht mehr automatisch unter dem
+gewohnten Namen bereit. Dann unter **Project Settings → API Keys** den geheimen
+Schlüssel kopieren und ihn unter **Edge Functions → Secrets** als
+`SUPABASE_SECRET_KEY` hinterlegen. Dieser Schlüssel umgeht alle
+Sicherheitsregeln — er gehört ausschließlich hierhin, niemals in die App oder
+ins Repository.
 
 ### 4. Erstes Büro-Konto anlegen
 

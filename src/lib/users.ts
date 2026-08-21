@@ -22,34 +22,64 @@ interface ManageUsersPayload {
   remainingLeaveDays?: number;
 }
 
+/**
+ * Ruft die Funktion direkt auf statt über supabase.functions.invoke.
+ *
+ * Grund: invoke meldet jeden Fehlerstatus pauschal als „Edge Function returned
+ * a non-2xx status code" und verschluckt dabei den erklärenden Text aus der
+ * Antwort — also genau die Information, die man zur Behebung braucht.
+ */
 async function callManageUsers<T>(payload: ManageUsersPayload): Promise<T> {
-  const { data, error } = await supabase.functions.invoke('manage-users', { body: payload });
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  if (error) {
-    // Die Funktion antwortet bei Fehlern mit einem lesbaren Text im Rumpf;
-    // supabase-js verpackt das in einen technischen Fehler. Hier wird der
-    // eigentliche Grund wieder herausgeholt.
-    let message = error.message;
-    const context = (error as { context?: Response }).context;
-    if (context && typeof context.json === 'function') {
-      try {
-        const body = await context.json();
-        if (body?.error) message = body.error;
-      } catch {
-        // Rumpf nicht lesbar — bei der technischen Meldung bleiben.
-      }
-    }
-    if (message.includes('Failed to send') || message.includes('FunctionsFetchError')) {
-      message =
-        'Die Benutzerverwaltung ist noch nicht eingerichtet (Edge Function „manage-users" fehlt). Siehe README.';
-    }
-    throw new Error(message);
+  if (!session) throw new Error('Nicht angemeldet.');
+
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-users`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw new Error(
+      'Die Benutzerverwaltung ist nicht erreichbar. Entweder fehlt die Internetverbindung, ' +
+        'oder die Edge Function „manage-users" wurde noch nicht angelegt (siehe README).',
+    );
   }
 
-  if (data && typeof data === 'object' && 'error' in data) {
-    throw new Error(String((data as { error: unknown }).error));
+  const text = await response.text();
+  let body: unknown = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    // Keine JSON-Antwort — der Rohtext ist dann die beste verfügbare Auskunft.
   }
-  return data as T;
+
+  if (!response.ok) {
+    const detail =
+      body && typeof body === 'object' && 'error' in body
+        ? String((body as { error: unknown }).error)
+        : text || `HTTP ${response.status}`;
+
+    if (response.status === 404) {
+      throw new Error(
+        'Die Edge Function „manage-users" existiert nicht. Sie muss einmalig im ' +
+          'Supabase-Dashboard angelegt werden (siehe README, Schritt 3).',
+      );
+    }
+    throw new Error(detail);
+  }
+
+  return body as T;
 }
 
 export async function createUser(input: {

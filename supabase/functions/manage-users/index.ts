@@ -30,10 +30,50 @@ interface Payload {
 }
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 
-const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+/**
+ * Den geheimen Schlüssel ermitteln.
+ *
+ * Supabase hat die Benennung umgestellt: Neue Projekte bekommen
+ * SUPABASE_SECRET_KEYS (ein JSON-Verzeichnis) beziehungsweise
+ * SUPABASE_SECRET_DEFAULT_KEY, ältere den bisherigen
+ * SUPABASE_SERVICE_ROLE_KEY. Hier werden alle Varianten der Reihe nach
+ * geprüft, damit die Funktion in beiden Fällen läuft.
+ */
+function resolveSecretKey(): string {
+  const direct =
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ??
+    Deno.env.get('SUPABASE_SECRET_KEY') ??
+    Deno.env.get('SUPABASE_SECRET_DEFAULT_KEY');
+  if (direct) return direct;
+
+  const bundle = Deno.env.get('SUPABASE_SECRET_KEYS');
+  if (bundle) {
+    try {
+      const parsed = JSON.parse(bundle) as Record<string, string>;
+      const value = parsed.default ?? Object.values(parsed)[0];
+      if (value) return value;
+    } catch {
+      // Kein gültiges JSON — unten mit klarer Meldung abbrechen.
+    }
+  }
+
+  throw new Error(
+    'Kein geheimer Schlüssel in der Umgebung gefunden. In den Edge-Function-Secrets ' +
+      'ein Secret namens SUPABASE_SECRET_KEY mit dem geheimen API-Schlüssel des ' +
+      'Projekts anlegen (Project Settings → API Keys).',
+  );
+}
+
+/**
+ * Verzögert erzeugt: Fehlt der Schlüssel, soll das als lesbare Antwort beim
+ * Aufrufer ankommen und nicht als nackter Absturz beim Start der Funktion.
+ */
+let adminClient: ReturnType<typeof createClient> | null = null;
+function db() {
+  if (!adminClient) adminClient = createClient(SUPABASE_URL, resolveSecretKey());
+  return adminClient;
+}
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -48,16 +88,16 @@ async function requireAdmin(req: Request): Promise<{ id: string } | Response> {
     return json({ error: 'Nicht angemeldet.' }, 401);
   }
 
-  const asCaller = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: authHeader } },
-  });
-
-  const { data: userData, error } = await asCaller.auth.getUser();
+  // Das Token wird direkt geprüft, statt einen zweiten Client mit dem
+  // öffentlichen Schlüssel aufzubauen — ein Schlüssel weniger, der in der
+  // Umgebung vorhanden sein muss.
+  const token = authHeader.slice('Bearer '.length);
+  const { data: userData, error } = await db().auth.getUser(token);
   if (error || !userData.user) {
-    return json({ error: 'Anmeldung ungültig.' }, 401);
+    return json({ error: 'Anmeldung ungültig oder abgelaufen.' }, 401);
   }
 
-  const { data: profile } = await admin
+  const { data: profile } = await db()
     .from('employees')
     .select('role')
     .eq('id', userData.user.id)
@@ -72,7 +112,7 @@ async function requireAdmin(req: Request): Promise<{ id: string } | Response> {
 
 /** Verhindert, dass sich das Büro selbst aussperrt. */
 async function countAdmins(): Promise<number> {
-  const { count } = await admin
+  const { count } = await db()
     .from('employees')
     .select('id', { count: 'exact', head: true })
     .eq('role', 'admin');
@@ -80,6 +120,17 @@ async function countAdmins(): Promise<number> {
 }
 
 Deno.serve(async (req) => {
+  try {
+    return await handle(req);
+  } catch (e) {
+    // Jeder unerwartete Fehler kommt als lesbarer Text beim Aufrufer an.
+    // Ohne das sieht man in der App nur „non-2xx status code".
+    console.error('manage-users:', e);
+    return json({ error: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Nur POST.' }, 405);
 
   const caller = await requireAdmin(req);
@@ -103,7 +154,7 @@ Deno.serve(async (req) => {
         return json({ error: 'Das Passwort muss mindestens 8 Zeichen haben.' }, 400);
       }
 
-      const { data: created, error: createError } = await admin.auth.admin.createUser({
+      const { data: created, error: createError } = await db().auth.admin.createUser({
         email,
         password,
         // Kein Bestätigungsklick: Die Konten werden im Büro ausgegeben, und
@@ -119,7 +170,7 @@ Deno.serve(async (req) => {
         return json({ error: friendly }, 400);
       }
 
-      const { error: profileError } = await admin.from('employees').insert({
+      const { error: profileError } = await db().from('employees').insert({
         id: created.user.id,
         first_name: firstName,
         last_name: lastName,
@@ -131,7 +182,7 @@ Deno.serve(async (req) => {
         // Stammdaten fehlgeschlagen: Das Anmeldekonto wieder entfernen, sonst
         // bleibt eine Anmeldung ohne Profil zurück, mit der niemand etwas
         // anfangen kann.
-        await admin.auth.admin.deleteUser(created.user.id);
+        await db().auth.admin.deleteUser(created.user.id);
         return json({ error: `Stammdaten fehlgeschlagen: ${profileError.message}` }, 400);
       }
 
@@ -146,7 +197,7 @@ Deno.serve(async (req) => {
         return json({ error: 'Das eigene Konto lässt sich nicht löschen.' }, 400);
       }
 
-      const { data: target } = await admin
+      const { data: target } = await db()
         .from('employees')
         .select('role')
         .eq('id', employeeId)
@@ -159,7 +210,7 @@ Deno.serve(async (req) => {
       // Die employees-Zeile hängt per ON DELETE CASCADE am Anmeldekonto und
       // verschwindet mit. Wochenberichte ebenso — deshalb steht in der App eine
       // Rückfrage davor.
-      const { error } = await admin.auth.admin.deleteUser(employeeId);
+      const { error } = await db().auth.admin.deleteUser(employeeId);
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true });
     }
@@ -173,7 +224,7 @@ Deno.serve(async (req) => {
         return json({ error: 'Die eigenen Büro-Rechte lassen sich nicht entziehen.' }, 400);
       }
 
-      const { data: target } = await admin
+      const { data: target } = await db()
         .from('employees')
         .select('role')
         .eq('id', employeeId)
@@ -183,7 +234,7 @@ Deno.serve(async (req) => {
         return json({ error: 'Es muss mindestens ein Büro-Konto geben.' }, 400);
       }
 
-      const { error } = await admin.from('employees').update({ role }).eq('id', employeeId);
+      const { error } = await db().from('employees').update({ role }).eq('id', employeeId);
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true });
     }
@@ -196,7 +247,7 @@ Deno.serve(async (req) => {
         return json({ error: 'Das Passwort muss mindestens 8 Zeichen haben.' }, 400);
       }
 
-      const { error } = await admin.auth.admin.updateUserById(employeeId, { password });
+      const { error } = await db().auth.admin.updateUserById(employeeId, { password });
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true });
     }
@@ -204,4 +255,4 @@ Deno.serve(async (req) => {
     default:
       return json({ error: 'Unbekannte Aktion.' }, 400);
   }
-});
+}

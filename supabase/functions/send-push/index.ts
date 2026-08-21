@@ -45,12 +45,41 @@ const APP_URL = Deno.env.get('APP_URL') ?? 'https://timstuu.github.io/malerprofi
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
-// Service-Role, weil die Funktion Empfänger über alle Mitarbeiter hinweg
+/**
+ * Den geheimen Schlüssel ermitteln. Supabase hat die Benennung umgestellt:
+ * Neue Projekte bekommen SUPABASE_SECRET_KEYS beziehungsweise
+ * SUPABASE_SECRET_DEFAULT_KEY, ältere den bisherigen
+ * SUPABASE_SERVICE_ROLE_KEY. (Bewusst in beiden Funktionen dupliziert — sie
+ * werden einzeln über den Dashboard-Editor eingefügt und müssen für sich
+ * allein lauffähig sein.)
+ */
+function resolveSecretKey(): string {
+  const direct =
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ??
+    Deno.env.get('SUPABASE_SECRET_KEY') ??
+    Deno.env.get('SUPABASE_SECRET_DEFAULT_KEY');
+  if (direct) return direct;
+
+  const bundle = Deno.env.get('SUPABASE_SECRET_KEYS');
+  if (bundle) {
+    try {
+      const parsed = JSON.parse(bundle) as Record<string, string>;
+      const value = parsed.default ?? Object.values(parsed)[0];
+      if (value) return value;
+    } catch {
+      // Kein gültiges JSON — unten mit klarer Meldung abbrechen.
+    }
+  }
+
+  throw new Error(
+    'Kein geheimer Schlüssel in der Umgebung gefunden. In den Edge-Function-Secrets ' +
+      'ein Secret namens SUPABASE_SECRET_KEY anlegen (Project Settings → API Keys).',
+  );
+}
+
+// Erhöhte Rechte, weil die Funktion Empfänger über alle Mitarbeiter hinweg
 // ermitteln muss. Sie wird ausschließlich vom Datenbank-Webhook aufgerufen.
-const supabase = createClient(
-  Deno.env.get('SUPABASE_URL')!,
-  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-);
+const supabase = createClient(Deno.env.get('SUPABASE_URL')!, resolveSecretKey());
 
 function formatDate(iso: string): string {
   const [y, m, d] = iso.split('-');
