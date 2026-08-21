@@ -54,31 +54,59 @@ Anmeldekonten entstehen weiterhin unter **Authentication → Users**.
 Ohne diese Schritte funktioniert die App vollständig — es kommen lediglich keine
 Push-Nachrichten an, und der Schalter in den Einstellungen erklärt das.
 
-1. **Schlüsselpaar erzeugen.** Es entsteht auf deinem Rechner und wird nirgends
-   gespeichert:
+Alles läuft im Browser — **weder die Supabase CLI noch Docker werden gebraucht.**
 
-   ```bash
-   node scripts/generate-vapid-keys.mjs
-   ```
+**1. Schlüsselpaar erzeugen** (im Terminal, im Projektordner):
 
-2. **Öffentlichen Schlüssel** als `VITE_VAPID_PUBLIC_KEY` in `.env.local` und als
-   GitHub-Repository-Secret hinterlegen (er ist für den Browser bestimmt und darf
-   öffentlich sein).
+```bash
+node scripts/generate-vapid-keys.mjs
+```
 
-3. **Privaten Schlüssel** nur in Supabase hinterlegen — niemals ins Repository:
+Die Ausgabe enthält zwei Schlüssel. Fenster offen lassen; sie werden gleich
+gebraucht und nirgends gespeichert. Der private Schlüssel gehört **nicht** ins
+Repository.
 
-   ```bash
-   supabase functions deploy send-push --no-verify-jwt
-   supabase secrets set VAPID_PRIVATE_KEY=... VAPID_PUBLIC_KEY=... VAPID_SUBJECT=mailto:buero@…
-   ```
+**2. Edge Function anlegen** (Supabase → Edge Functions → *Deploy a new function*
+→ *Via Editor*):
 
-4. **Database Webhook anlegen** (Supabase → Database → Webhooks):
-   Tabelle `leave_requests`, Ereignisse **Insert** und **Update**, Ziel die
-   Edge Function `send-push`.
+- Name exakt `send-push`
+- Den Inhalt von `supabase/functions/send-push/index.ts` vollständig
+  hineinkopieren
+- Die JWT-Prüfung ausschalten (*Verify JWT*), sonst weist die Funktion den
+  Aufruf des Webhooks ab. Den Zugangsschutz übernimmt Schritt 3.
+- *Deploy function*
 
-5. Jeder Mitarbeiter schaltet Benachrichtigungen einmalig in den **Einstellungen**
-   der App ein. Auf dem iPhone geht das nur in der über „Zum Home-Bildschirm"
-   installierten App (ab iOS 16.4) — im Safari-Tab existiert die Push-Funktion nicht.
+**3. Secrets hinterlegen** (Supabase → Edge Functions → *Secrets*):
+
+| Name | Wert |
+|---|---|
+| `VAPID_PUBLIC_KEY` | öffentlicher Schlüssel aus Schritt 1 |
+| `VAPID_PRIVATE_KEY` | privater Schlüssel aus Schritt 1 |
+| `VAPID_SUBJECT` | `mailto:` + eure Büro-Mailadresse |
+| `WEBHOOK_SECRET` | ein selbst ausgedachtes langes Passwort |
+| `APP_URL` | `https://timstuu.github.io/malerprofis-berichte/` |
+
+`SUPABASE_URL` und `SUPABASE_SERVICE_ROLE_KEY` stehen automatisch zur Verfügung
+und müssen nicht eingetragen werden.
+
+**4. Database Webhook anlegen** (Supabase → Database → Webhooks → *Create a new hook*):
+
+- Tabelle `leave_requests`, Ereignisse **Insert** und **Update**
+- Typ *Supabase Edge Functions*, Funktion `send-push`, Methode `POST`
+- HTTP-Header hinzufügen: `x-webhook-secret` mit dem Wert aus Schritt 3
+
+**5. Öffentlichen Schlüssel in die App bringen:**
+
+- in `.env.local`: `VITE_VAPID_PUBLIC_KEY="…"`
+- als GitHub-Repository-Secret gleichen Namens (Settings → Secrets and variables
+  → Actions)
+- in `.github/workflows/deploy.yml` ist er bereits eingetragen; die Action einmal
+  neu starten, damit der Schlüssel in den Build gelangt
+
+**6. Einschalten:** Jeder Mitarbeiter aktiviert Benachrichtigungen einmalig in den
+**Einstellungen** der App. Auf dem iPhone geht das nur in der über
+„Teilen → Zum Home-Bildschirm" installierten App (ab iOS 16.4) — im Safari-Tab
+existiert die Push-Funktion nicht.
 
 ## Entwicklung
 

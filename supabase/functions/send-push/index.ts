@@ -9,9 +9,12 @@
  * VAPID-Schlüssel signiert wird. Im Browser wäre dieser Schlüssel für jeden
  * einsehbar.
  *
- * Deployment:
- *   supabase functions deploy send-push --no-verify-jwt
- *   supabase secrets set VAPID_PUBLIC_KEY=... VAPID_PRIVATE_KEY=... VAPID_SUBJECT=mailto:...
+ * Einrichtung ohne CLI: siehe README, Abschnitt „Benachrichtigungen einrichten".
+ * Die Funktion wird im Supabase-Dashboard angelegt und läuft ohne
+ * JWT-Prüfung, damit der Datenbank-Webhook sie erreicht. Als Zugangsschutz
+ * dient stattdessen das Secret WEBHOOK_SECRET, das der Webhook als Kopfzeile
+ * mitschickt — ohne das könnte jeder, der die Adresse kennt, Nachrichten an
+ * die Belegschaft auslösen.
  */
 
 import webpush from 'npm:web-push@3.6.7';
@@ -37,6 +40,7 @@ interface WebhookPayload {
 const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY') ?? '';
 const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY') ?? '';
 const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') ?? 'mailto:buero@malerprofis-uderstadt.de';
+const WEBHOOK_SECRET = Deno.env.get('WEBHOOK_SECRET') ?? '';
 const APP_URL = Deno.env.get('APP_URL') ?? 'https://timstuu.github.io/malerprofis-berichte/';
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
@@ -102,6 +106,19 @@ Deno.serve(async (req) => {
   if (!VAPID_PRIVATE_KEY) {
     console.error('VAPID_PRIVATE_KEY fehlt — es wird nichts versendet.');
     return new Response('not configured', { status: 500 });
+  }
+
+  // Zugangsschutz: Die Funktion ist ohne JWT-Prüfung öffentlich erreichbar,
+  // damit der Datenbank-Webhook sie aufrufen kann.
+  if (WEBHOOK_SECRET) {
+    if (req.headers.get('x-webhook-secret') !== WEBHOOK_SECRET) {
+      return new Response('forbidden', { status: 403 });
+    }
+  } else {
+    console.warn(
+      'WEBHOOK_SECRET ist nicht gesetzt — die Funktion nimmt Aufrufe von überall an. ' +
+        'Bitte Secret setzen und im Webhook als Kopfzeile x-webhook-secret mitschicken.',
+    );
   }
 
   let payload: WebhookPayload;
