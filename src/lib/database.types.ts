@@ -17,6 +17,8 @@ export interface Employee {
   role: Role;
   remaining_leave_days: number;
   active: boolean;
+  /** Bezeichner aus der Palette in colors.ts, nicht der Farbwert selbst. */
+  color: string | null;
   created_at?: string;
 }
 

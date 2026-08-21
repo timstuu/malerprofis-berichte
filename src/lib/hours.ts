@@ -33,19 +33,91 @@ export const TARGET_HOURS: Record<Weekday, number> = {
   Sonntag: 0,
 };
 
+/** Wochentag eines Datums als Name — getDay(): 0 = Sonntag ... 6 = Samstag. */
+const WEEKDAY_BY_INDEX: Weekday[] = [
+  'Sonntag',
+  'Montag',
+  'Dienstag',
+  'Mittwoch',
+  'Donnerstag',
+  'Freitag',
+  'Samstag',
+];
+
+export function weekdayOf(date: Date): Weekday {
+  return WEEKDAY_BY_INDEX[date.getDay()];
+}
+
 /** Soll-Stunden für ein konkretes Datum. */
 export function targetHoursForDate(date: Date): number {
-  // getDay(): 0 = Sonntag ... 6 = Samstag
-  const map: Weekday[] = [
-    'Sonntag',
-    'Montag',
-    'Dienstag',
-    'Mittwoch',
-    'Donnerstag',
-    'Freitag',
-    'Samstag',
-  ];
-  return TARGET_HOURS[map[date.getDay()]];
+  return TARGET_HOURS[weekdayOf(date)];
+}
+
+// ---------------------------------------------------------------------------
+// Pausen
+// ---------------------------------------------------------------------------
+
+/**
+ * Die betrieblichen Pausen liegen zu festen Uhrzeiten, nicht als Kontingent.
+ * Freitags entfällt die zweite — der Arbeitstag endet vor der Mittagspause.
+ *
+ * Dass sich daraus „einmal pro Tag" von selbst ergibt, ist der eigentliche
+ * Grund für feste Fenster: Zwei Einsätze desselben Tages liegen zeitlich
+ * hintereinander, also kann jedes Fenster nur von einem der beiden überdeckt
+ * werden. Es braucht keine Tagesbuchführung, um doppelten Abzug zu verhindern.
+ */
+const PAUSE_WINDOWS: Record<Weekday, [number, number][]> = {
+  Montag: [[600, 630], [780, 810]], // 10:00–10:30, 13:00–13:30
+  Dienstag: [[600, 630], [780, 810]],
+  Mittwoch: [[600, 630], [780, 810]],
+  Donnerstag: [[600, 630], [780, 810]],
+  Freitag: [[600, 630]],
+  Samstag: [[600, 630], [780, 810]],
+  Sonntag: [[600, 630], [780, 810]],
+};
+
+function minutesOf(time: string): number {
+  const [hours, mins] = time.split(':').map(Number);
+  return hours * 60 + mins;
+}
+
+/**
+ * Abzuziehende Pause eines Einsatzes: die Überschneidung mit den Pausenfenstern
+ * seines Wochentags, nicht ein pauschaler Wert.
+ *
+ * Damit verliert niemand eine Pause, die zeitlich nicht stattgefunden hat — wer
+ * um 14 Uhr anfängt, arbeitet an keinem Fenster vorbei und bekommt nichts
+ * abgezogen.
+ *
+ * @param startTime "HH:MM"
+ * @param endTime   "HH:MM"
+ */
+export function breakMinutesFor(startTime: string, endTime: string, weekday: Weekday): number {
+  if (!startTime || !endTime) return 0;
+
+  const start = minutesOf(startTime);
+  // Über Mitternacht: Das Ende liegt am Folgetag, die Fenster nicht.
+  const end = minutesOf(endTime) <= start ? minutesOf(endTime) + 24 * 60 : minutesOf(endTime);
+
+  return PAUSE_WINDOWS[weekday].reduce((total, [from, to]) => {
+    const overlap = Math.min(end, to) - Math.max(start, from);
+    return total + Math.max(0, overlap);
+  }, 0);
+}
+
+/** Dasselbe für ein Datum statt eines Wochentagsnamens. */
+export function breakMinutesForDate(startTime: string, endTime: string, date: Date): number {
+  return breakMinutesFor(startTime, endTime, weekdayOf(date));
+}
+
+/**
+ * Regelarbeitszeit als Vorbelegung im Einsatzformular. Die Zeiten sind so
+ * gewählt, dass nach Abzug der Pausen genau die Soll-Stunden herauskommen.
+ */
+export function defaultShiftFor(weekday: Weekday): { start: string; end: string } {
+  return weekday === 'Freitag'
+    ? { start: '07:00', end: '13:30' } // 6,5 Std. − 30 Min = 6,0
+    : { start: '07:00', end: '16:30' }; // 9,5 Std. − 60 Min = 8,5
 }
 
 /**

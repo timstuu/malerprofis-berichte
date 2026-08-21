@@ -1,16 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { addDays, addWeeks, format, subWeeks } from 'date-fns';
 import { de } from 'date-fns/locale';
+import { motion } from 'motion/react';
 import { ChevronLeft, ChevronRight, Plus, Trash2, Copy, Loader2, Pencil, Check } from 'lucide-react';
 import { fetchAssignments, fetchWeekNotes, saveWeekNote, type AssignmentRow } from '../../lib/data.ts';
 import {
   copyWeek,
   createAssignments,
   deleteAssignment,
-  expandSeries,
+  fetchImportedAssignmentIds,
+  moveAssignment,
 } from '../../lib/planning.ts';
-import { WEEKDAYS } from '../../lib/hours.ts';
+import { WEEKDAYS, breakMinutesForDate, defaultShiftFor, weekdayOf } from '../../lib/hours.ts';
 import { sortEmployees } from '../../lib/users.ts';
+import { colorOf } from '../../lib/colors.ts';
 import type { Employee, Site, WeekNote } from '../../lib/database.types.ts';
 
 /**
@@ -20,7 +23,15 @@ import type { Employee, Site, WeekNote } from '../../lib/database.types.ts';
  * wer wo ist. Auch das Büro sieht zuerst nur die Übersicht: Geändert wird erst
  * nach einem Klick auf „Bearbeiten“ (`canEdit`). Das schützt die Planung vor
  * versehentlichen Klicks, wenn jemand nur nachschauen wollte.
+ *
+ * Das Raster ist bewusst keine `<table>`: Eine Kachel muss sich über Zell- und
+ * Zeilengrenzen hinweg ziehen lassen, und ein `<td>` schneidet alles ab, was
+ * über seine Grenzen hinausragt.
  */
+
+/** Anzahl der geplanten Tage: Montag bis Samstag. */
+const DAY_COUNT = 6;
+
 export default function WeekGrid({
   employees,
   sites,
@@ -32,9 +43,6 @@ export default function WeekGrid({
   canEdit?: boolean;
   currentEmployeeId?: string;
 }) {
-  // Ohne angemeldetes Konto lässt sich kein Hinweis speichern; das betrifft
-  // nur den Fernseher, der diese Ansicht ohnehin nicht bearbeitet.
-
   const [weekStart, setWeekStart] = useState(() => {
     const now = new Date();
     const day = (now.getDay() + 6) % 7; // Montag = 0
@@ -46,9 +54,23 @@ export default function WeekGrid({
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ employeeId: string; date: string } | null>(null);
   const [editMode, setEditMode] = useState(false);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+
+  /**
+   * Rechtecke aller Zellen, gesammelt beim Rendern. Beim Loslassen einer Kachel
+   * entscheidet der Zeigerpunkt, in welcher Zelle sie gelandet ist — anders als
+   * bei den Ziehereignissen des Browsers funktioniert das auch mit dem Finger.
+   */
+  const cellRects = useRef(new Map<string, DOMRect>());
 
   const readOnly = !canEdit || !editMode;
-  const weekEnd = addDays(weekStart, 6);
+  const weekEnd = addDays(weekStart, DAY_COUNT - 1);
+
+  const days = Array.from({ length: DAY_COUNT }, (_, i) => {
+    const date = addDays(weekStart, i);
+    return { label: WEEKDAYS[i], date, iso: format(date, 'yyyy-MM-dd') };
+  });
 
   const load = async () => {
     setLoading(true);
@@ -68,6 +90,7 @@ export default function WeekGrid({
 
   useEffect(() => {
     load();
+    setEditing(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekStart]);
 
@@ -91,10 +114,67 @@ export default function WeekGrid({
   const cellAssignments = (employeeId: string, date: string) =>
     assignments.filter((a) => a.employee_id === employeeId && a.date === date);
 
-  const remove = async (id: string) => {
-    if (!confirm('Diesen Einsatz löschen?')) return;
+  const remove = async (assignment: AssignmentRow) => {
+    if (!confirm(`Einsatz „${assignment.sites?.address ?? ''}“ löschen?`)) return;
     try {
-      await deleteAssignment(id);
+      await deleteAssignment(assignment.id);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  /** Legt eine Kopie in dieselbe Zelle — von dort wird sie hingezogen, wo sie hin soll. */
+  const duplicate = async (assignment: AssignmentRow) => {
+    try {
+      await createAssignments([
+        {
+          employee_id: assignment.employee_id,
+          site_id: assignment.site_id,
+          date: assignment.date,
+          start_time: assignment.start_time,
+          end_time: assignment.end_time,
+          break_minutes: assignment.break_minutes,
+          note: assignment.note,
+        },
+      ]);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const move = async (assignment: AssignmentRow, employeeId: string, date: string) => {
+    if (assignment.employee_id === employeeId && assignment.date === date) return;
+
+    try {
+      // Steht die Schicht schon im Wochenbericht des bisherigen Mitarbeiters,
+      // bleibt sie dort auch nach dem Verschieben stehen. Das lässt sich von
+      // hier aus nicht aufräumen, ohne einen fremden Bericht zu verändern —
+      // also wird gefragt, statt es stillschweigend zu tun.
+      if (assignment.employee_id !== employeeId) {
+        const imported = await fetchImportedAssignmentIds([assignment.id]);
+        if (imported.has(assignment.id)) {
+          const previous = workers.find((w) => w.id === assignment.employee_id);
+          const name = previous ? `${previous.first_name} ${previous.last_name}` : 'der Kollege';
+          if (
+            !confirm(
+              `${name} hat diesen Einsatz bereits in seinen Wochenbericht übernommen.\n\n` +
+                'Nach dem Verschieben steht die Schicht in beiden Berichten. Die Zeile im ' +
+                'alten Bericht muss von Hand gelöscht werden.\n\nTrotzdem verschieben?',
+            )
+          ) {
+            return;
+          }
+        }
+      }
+
+      await moveAssignment(assignment.id, {
+        employeeId,
+        date,
+        startTime: assignment.start_time,
+        endTime: assignment.end_time,
+      });
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -106,7 +186,7 @@ export default function WeekGrid({
     try {
       const previous = await fetchAssignments(
         format(previousStart, 'yyyy-MM-dd'),
-        format(addDays(previousStart, 6), 'yyyy-MM-dd'),
+        format(addDays(previousStart, DAY_COUNT - 1), 'yyyy-MM-dd'),
       );
       if (previous.length === 0) {
         setError('In der Vorwoche ist nichts geplant.');
@@ -119,6 +199,25 @@ export default function WeekGrid({
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+
+  /** Merkt sich die Lage einer Zelle, solange sie im Dokument steht. */
+  const registerCell = (key: string) => (node: HTMLDivElement | null) => {
+    if (node) cellRects.current.set(key, node.getBoundingClientRect());
+    else cellRects.current.delete(key);
+  };
+
+  /** In welcher Zelle liegt dieser Bildschirmpunkt? */
+  const cellAt = (x: number, y: number): { employeeId: string; date: string } | null => {
+    for (const [key, rect] of cellRects.current) {
+      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+        const [employeeId, date] = key.split('|');
+        return { employeeId, date };
+      }
+    }
+    return null;
+  };
+
+  const gridTemplate = `10rem repeat(${DAY_COUNT}, minmax(8.5rem, 1fr))`;
 
   return (
     <div className="space-y-4">
@@ -187,109 +286,129 @@ export default function WeekGrid({
         </p>
       )}
 
+      {!readOnly && (
+        <p className="text-xs text-[#141414]/40">
+          Kacheln lassen sich auf andere Tage und Mitarbeiter ziehen.
+        </p>
+      )}
+
       <div className="bg-white rounded-3xl shadow-sm border border-[#141414]/5 overflow-x-auto">
-        <table className="w-full min-w-[900px] border-collapse">
-          <thead>
-            <tr className="bg-gray-50/80">
-              <th className="text-left text-xs font-bold uppercase tracking-wider text-gray-500 p-3 w-40">
-                Mitarbeiter
-              </th>
-              {WEEKDAYS.slice(0, 6).map((day, i) => (
-                <th
-                  key={day}
-                  className="text-left text-xs font-bold uppercase tracking-wider text-gray-500 p-3"
-                >
-                  {day.slice(0, 2)} {format(addDays(weekStart, i), 'dd.MM.')}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {/* Hinweiszeile: gilt dem Tag, nicht einer Person — Betriebs-
-                versammlung, Brückentag, Lager zu. Was eine einzelne Person
-                betrifft, gehört als Abwesenheitscode in die Zellen darunter. */}
-            {(!readOnly || hasNotes) && (
-              <tr className="border-t border-[#141414]/5 bg-amber-50/40">
-                <td className="p-3 align-middle">
-                  <p className="text-xs font-bold uppercase tracking-wider text-amber-700/70">
-                    Hinweise
-                  </p>
-                </td>
-                {WEEKDAYS.slice(0, 6).map((day, i) => {
-                  const date = format(addDays(weekStart, i), 'yyyy-MM-dd');
-                  const note = noteOn(date);
-
-                  return (
-                    <td key={day} className="p-2 align-middle">
-                      {readOnly ? (
-                        note && <p className="text-xs text-amber-900 px-1">{note}</p>
-                      ) : (
-                        <input
-                          // Der Schlüssel enthält den gespeicherten Text: Nach
-                          // dem Speichern wird das Feld neu aufgebaut und zeigt
-                          // den Stand aus der Datenbank statt der alten Eingabe.
-                          key={`${date}-${note}`}
-                          defaultValue={note}
-                          onBlur={(e) => storeNote(date, e.target.value)}
-                          placeholder="—"
-                          className="w-full text-xs px-2 py-1.5 bg-white/70 border border-amber-200 rounded-lg placeholder:text-amber-700/25 focus:outline-none focus:border-amber-400"
-                        />
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            )}
-
-            {workers.map((employee) => (
-              <tr
-                key={employee.id}
-                className={
-                  employee.id === currentEmployeeId
-                    ? 'border-t border-[#141414]/5 bg-brand-accent1/5'
-                    : 'border-t border-[#141414]/5'
-                }
+        <div className="min-w-[64rem]">
+          {/* Kopfzeile */}
+          <div className="grid bg-gray-50/80" style={{ gridTemplateColumns: gridTemplate }}>
+            <div className="text-left text-xs font-bold uppercase tracking-wider text-gray-500 p-3">
+              Mitarbeiter
+            </div>
+            {days.map((day) => (
+              <div
+                key={day.iso}
+                className="text-left text-xs font-bold uppercase tracking-wider text-gray-500 p-3"
               >
-                <td className="p-3 align-top">
-                  <p className="font-semibold text-sm">
-                    {employee.first_name} {employee.last_name}
-                  </p>
-                  {employee.role === 'admin' && (
-                    <span className="text-[10px] font-bold uppercase text-gray-400">Büro</span>
-                  )}
-                </td>
+                {day.label.slice(0, 2)} {format(day.date, 'dd.MM.')}
+              </div>
+            ))}
+          </div>
 
-                {WEEKDAYS.slice(0, 6).map((day, i) => {
-                  const date = format(addDays(weekStart, i), 'yyyy-MM-dd');
-                  const cell = cellAssignments(employee.id, date);
+          {/* Hinweiszeile: gilt dem Tag, nicht einer Person — Betriebs-
+              versammlung, Brückentag, Lager zu. Was eine einzelne Person
+              betrifft, gehört als Abwesenheitscode in die Zellen darunter. */}
+          {(!readOnly || hasNotes) && (
+            <div
+              className="grid border-t border-[#141414]/5 bg-amber-50/40"
+              style={{ gridTemplateColumns: gridTemplate }}
+            >
+              <div className="p-3 flex items-center">
+                <p className="text-xs font-bold uppercase tracking-wider text-amber-700/70">
+                  Hinweise
+                </p>
+              </div>
+              {days.map((day) => {
+                const note = noteOn(day.iso);
+                return (
+                  <div key={day.iso} className="p-2 flex items-center">
+                    {readOnly ? (
+                      note && <p className="text-xs text-amber-900 px-1">{note}</p>
+                    ) : (
+                      <input
+                        // Der Schlüssel enthält den gespeicherten Text: Nach dem
+                        // Speichern wird das Feld neu aufgebaut und zeigt den
+                        // Stand aus der Datenbank statt der alten Eingabe.
+                        key={`${day.iso}-${note}`}
+                        defaultValue={note}
+                        onBlur={(e) => storeNote(day.iso, e.target.value)}
+                        placeholder="—"
+                        className="w-full text-xs px-2 py-1.5 bg-white/70 border border-amber-200 rounded-lg placeholder:text-amber-700/25 focus:outline-none focus:border-amber-400"
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Eine Zeile je Mitarbeiter */}
+          {workers.map((employee) => {
+            const color = colorOf(employee);
+
+            return (
+              <div
+                key={employee.id}
+                className={`grid border-t border-[#141414]/5 ${
+                  employee.id === currentEmployeeId ? 'bg-brand-accent1/5' : ''
+                }`}
+                style={{ gridTemplateColumns: gridTemplate }}
+              >
+                <div className="p-3 flex items-start gap-2">
+                  <span
+                    className="w-1.5 self-stretch rounded-full shrink-0"
+                    style={{ backgroundColor: color.swatch }}
+                  />
+                  <div className="min-w-0">
+                    <p className="font-semibold text-sm truncate">
+                      {employee.first_name} {employee.last_name}
+                    </p>
+                    {employee.role === 'admin' && (
+                      <span className="text-[10px] font-bold uppercase text-gray-400">Büro</span>
+                    )}
+                  </div>
+                </div>
+
+                {days.map((day) => {
+                  const key = `${employee.id}|${day.iso}`;
+                  const cell = cellAssignments(employee.id, day.iso);
                   const isEditing =
-                    editing?.employeeId === employee.id && editing?.date === date;
+                    editing?.employeeId === employee.id && editing?.date === day.iso;
 
                   return (
-                    <td key={day} className="p-2 align-top min-w-[8rem]">
+                    <div
+                      key={day.iso}
+                      ref={registerCell(key)}
+                      className={`p-2 min-h-[4.5rem] transition-colors ${
+                        dropTarget === key ? 'bg-brand-accent1/10' : ''
+                      }`}
+                    >
                       <div className="space-y-1">
                         {cell.map((a) => (
-                          <div
+                          <AssignmentTile
                             key={a.id}
-                            className="group bg-brand-accent1/10 rounded-xl px-2 py-1.5 text-xs"
-                          >
-                            <p className="font-bold text-brand-accent1 truncate">
-                              {a.sites?.number}
-                            </p>
-                            <p className="text-[#141414]/70 truncate">{a.sites?.address}</p>
-                            <p className="text-[#141414]/50 font-mono text-[10px]">
-                              {a.start_time.slice(0, 5)}–{a.end_time.slice(0, 5)}
-                              {a.break_minutes > 0 && ` (${a.break_minutes}′)`}
-                            </p>
-                            {!readOnly && (
-                              <button
-                                onClick={() => remove(a.id)}
-                                className="mt-1 text-[10px] text-gray-400 hover:text-red-500 flex items-center gap-1 cursor-pointer"
-                              >
-                                <Trash2 size={11} /> Löschen
-                              </button>
-                            )}
-                          </div>
+                            assignment={a}
+                            color={color}
+                            readOnly={readOnly}
+                            isDragging={draggingId === a.id}
+                            onDragStart={() => setDraggingId(a.id)}
+                            onDragMove={(x, y) => {
+                              const target = cellAt(x, y);
+                              setDropTarget(target ? `${target.employeeId}|${target.date}` : null);
+                            }}
+                            onDragEnd={(x, y) => {
+                              setDraggingId(null);
+                              setDropTarget(null);
+                              const target = cellAt(x, y);
+                              if (target) move(a, target.employeeId, target.date);
+                            }}
+                            onDelete={() => remove(a)}
+                            onDuplicate={() => duplicate(a)}
+                          />
                         ))}
 
                         {!readOnly &&
@@ -297,7 +416,7 @@ export default function WeekGrid({
                             <AssignmentForm
                               sites={sites}
                               employeeId={employee.id}
-                              date={date}
+                              date={day.iso}
                               onCancel={() => setEditing(null)}
                               onSaved={async () => {
                                 setEditing(null);
@@ -307,20 +426,20 @@ export default function WeekGrid({
                             />
                           ) : (
                             <button
-                              onClick={() => setEditing({ employeeId: employee.id, date })}
+                              onClick={() => setEditing({ employeeId: employee.id, date: day.iso })}
                               className="w-full flex items-center justify-center gap-1 text-[11px] text-gray-400 hover:text-brand-accent1 hover:bg-gray-50 border border-dashed border-gray-200 rounded-xl py-1.5 cursor-pointer"
                             >
                               <Plus size={12} /> Einsatz
                             </button>
                           ))}
                       </div>
-                    </td>
+                    </div>
                   );
                 })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+              </div>
+            );
+          })}
+        </div>
 
         {workers.length === 0 && (
           <div className="p-8 text-center text-[#141414]/30 text-sm">
@@ -333,8 +452,105 @@ export default function WeekGrid({
 }
 
 /**
- * Eingabe eines Einsatzes. Mit Datumsbereich lassen sich mehrere Tage auf
- * einmal planen; Wochenenden bleiben dabei ausgespart.
+ * Eine Einsatzkachel. Im Bearbeitungsmodus lässt sie sich mit Maus oder Finger
+ * auf eine andere Zelle ziehen; die Farbe ist die des Mitarbeiters, damit man
+ * seine Zeile auch dann wiederfindet, wenn die Namensspalte seitlich aus dem
+ * Bild gescrollt ist.
+ */
+function AssignmentTile({
+  assignment,
+  color,
+  readOnly,
+  isDragging,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+  onDelete,
+  onDuplicate,
+}: {
+  assignment: AssignmentRow;
+  color: ReturnType<typeof colorOf>;
+  readOnly: boolean;
+  isDragging: boolean;
+  onDragStart: () => void;
+  onDragMove: (x: number, y: number) => void;
+  onDragEnd: (x: number, y: number) => void;
+  onDelete: () => void;
+  onDuplicate: () => void;
+}) {
+  const body = (
+    <>
+      <p className="font-bold truncate" style={{ color: color.light.text }}>
+        {assignment.sites?.number}
+      </p>
+      <p className="text-[#141414]/70 truncate">{assignment.sites?.address}</p>
+      <p className="text-[#141414]/50 font-mono text-[10px]">
+        {assignment.start_time.slice(0, 5)}–{assignment.end_time.slice(0, 5)}
+      </p>
+    </>
+  );
+
+  if (readOnly) {
+    return (
+      <div
+        className="rounded-xl px-2 py-1.5 text-xs border"
+        style={{ backgroundColor: color.light.background, borderColor: color.light.border }}
+      >
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <motion.div
+      drag
+      dragSnapToOrigin
+      dragMomentum={false}
+      dragElastic={0}
+      onDragStart={onDragStart}
+      onDrag={(_, info) => onDragMove(info.point.x, info.point.y)}
+      onDragEnd={(_, info) => onDragEnd(info.point.x, info.point.y)}
+      whileDrag={{ scale: 1.04, zIndex: 50, cursor: 'grabbing' }}
+      className="relative rounded-xl px-2 py-1.5 text-xs border cursor-grab touch-none select-none"
+      style={{
+        backgroundColor: color.light.background,
+        borderColor: color.light.border,
+        // Die gezogene Kachel muss über den Nachbarzellen liegen, sonst
+        // verschwindet sie beim Ziehen unter der nächsten Zeile.
+        zIndex: isDragging ? 50 : undefined,
+        position: isDragging ? 'relative' : undefined,
+      }}
+    >
+      {body}
+
+      <div className="flex items-center gap-1 mt-1">
+        <button
+          onPointerDownCapture={(e) => e.stopPropagation()}
+          onClick={onDuplicate}
+          className="p-1 rounded-md text-[#141414]/40 hover:text-brand-accent1 hover:bg-white/70 cursor-pointer"
+          title="Einsatz duplizieren"
+          aria-label="Einsatz duplizieren"
+        >
+          <Copy size={12} />
+        </button>
+        <button
+          onPointerDownCapture={(e) => e.stopPropagation()}
+          onClick={onDelete}
+          className="p-1 rounded-md text-[#141414]/40 hover:text-red-500 hover:bg-white/70 cursor-pointer"
+          title="Einsatz löschen"
+          aria-label="Einsatz löschen"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+/**
+ * Eingabe eines Einsatzes: Baustelle, Beginn, Ende — mehr braucht die Planung
+ * nicht. Die Pause ergibt sich aus den festen Pausenfenstern des Wochentags und
+ * wird nur angezeigt, nicht eingegeben.
  */
 function AssignmentForm({
   sites,
@@ -351,13 +567,15 @@ function AssignmentForm({
   onSaved: () => Promise<void>;
   onError: (message: string) => void;
 }) {
+  const day = new Date(`${date}T00:00:00`);
+  const shift = defaultShiftFor(weekdayOf(day));
+
   const [siteId, setSiteId] = useState(sites.find((s) => !s.is_absence_code)?.id ?? '');
-  const [start, setStart] = useState('07:00');
-  const [end, setEnd] = useState('16:00');
-  const [pause, setPause] = useState(30);
-  const [until, setUntil] = useState('');
-  const [note, setNote] = useState('');
+  const [start, setStart] = useState(shift.start);
+  const [end, setEnd] = useState(shift.end);
   const [busy, setBusy] = useState(false);
+
+  const pause = breakMinutesForDate(start, end, day);
 
   const save = async () => {
     if (!siteId) {
@@ -366,16 +584,17 @@ function AssignmentForm({
     }
     setBusy(true);
     try {
-      const base = {
-        employee_id: employeeId,
-        site_id: siteId,
-        start_time: start,
-        end_time: end,
-        break_minutes: pause,
-        note: note.trim() || null,
-      };
-      const rows = until ? expandSeries(base, date, until) : [{ ...base, date }];
-      await createAssignments(rows);
+      await createAssignments([
+        {
+          employee_id: employeeId,
+          site_id: siteId,
+          date,
+          start_time: start,
+          end_time: end,
+          break_minutes: pause,
+          note: null,
+        },
+      ]);
       await onSaved();
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
@@ -412,31 +631,7 @@ function AssignmentForm({
         />
       </div>
 
-      <select
-        value={pause}
-        onChange={(e) => setPause(Number(e.target.value))}
-        className="w-full text-[11px] p-1.5 bg-white border border-gray-200 rounded-lg"
-      >
-        <option value={0}>Keine Pause</option>
-        <option value={30}>30 Min Pause</option>
-        <option value={60}>60 Min Pause</option>
-      </select>
-
-      <input
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        placeholder="Notiz (optional)"
-        className="w-full text-[11px] p-1.5 bg-white border border-gray-200 rounded-lg"
-      />
-
-      <label className="block text-[10px] text-gray-500 pt-1">Serie bis (optional)</label>
-      <input
-        type="date"
-        value={until}
-        min={date}
-        onChange={(e) => setUntil(e.target.value)}
-        className="w-full text-[11px] p-1.5 bg-white border border-gray-200 rounded-lg"
-      />
+      <p className="text-[10px] text-gray-500 px-0.5">Pause {pause} Min.</p>
 
       <div className="flex gap-1 pt-1">
         <button

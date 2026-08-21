@@ -1,5 +1,6 @@
 import { addDays, format } from 'date-fns';
 import { supabase } from './supabase.ts';
+import { breakMinutesForDate } from './hours.ts';
 import type { AssignmentRow } from './data.ts';
 
 /**
@@ -34,25 +35,50 @@ export async function deleteAssignment(id: string): Promise<void> {
 }
 
 /**
- * Legt denselben Einsatz für einen Datumsbereich an (Serienanlage).
- * Wochenenden werden übersprungen, sofern nicht ausdrücklich gewünscht.
+ * Verschiebt einen Einsatz auf einen anderen Tag und/oder Mitarbeiter.
+ *
+ * Die Pause wird dabei neu gerechnet: Sie hängt am Wochentag — freitags
+ * entfällt die zweite. Ein von Donnerstag auf Freitag gezogener Einsatz behielte
+ * sonst 60 Minuten Abzug, die es an dem Tag gar nicht gibt.
  */
-export function expandSeries(
-  base: Omit<NewAssignment, 'date'>,
-  from: string,
-  to: string,
-  includeWeekend = false,
-): NewAssignment[] {
-  const rows: NewAssignment[] = [];
-  const start = new Date(`${from}T00:00:00`);
-  const end = new Date(`${to}T00:00:00`);
+export async function moveAssignment(
+  id: string,
+  target: { employeeId: string; date: string; startTime: string; endTime: string },
+): Promise<void> {
+  const { error } = await supabase
+    .from('assignments')
+    .update({
+      employee_id: target.employeeId,
+      date: target.date,
+      break_minutes: breakMinutesForDate(
+        target.startTime.slice(0, 5),
+        target.endTime.slice(0, 5),
+        new Date(`${target.date}T00:00:00`),
+      ),
+    })
+    .eq('id', id);
+  if (error) throw new Error(`Einsatz konnte nicht verschoben werden: ${error.message}`);
+}
 
-  for (let d = start; d <= end; d = addDays(d, 1)) {
-    const weekday = d.getDay(); // 0 = Sonntag, 6 = Samstag
-    if (!includeWeekend && (weekday === 0 || weekday === 6)) continue;
-    rows.push({ ...base, date: format(d, 'yyyy-MM-dd') });
-  }
-  return rows;
+/**
+ * Wer von diesen Einsätzen wurde bereits in einen Wochenbericht übernommen?
+ *
+ * Wird vor dem Verschieben gebraucht: Landet ein bereits übernommener Einsatz
+ * bei einem Kollegen, steht die Schicht anschließend in zwei Berichten — im
+ * alten bleibt die Zeile stehen, im neuen kommt sie hinzu. Das lässt sich nicht
+ * verhindern, ohne fremde Berichte anzufassen, also wird gefragt statt
+ * stillschweigend verschoben.
+ */
+export async function fetchImportedAssignmentIds(ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const { data, error } = await supabase
+    .from('assignment_imports')
+    .select('assignment_id')
+    .in('assignment_id', ids)
+    .eq('state', 'imported');
+
+  if (error) throw new Error(`Übernahmestand konnte nicht geladen werden: ${error.message}`);
+  return new Set((data ?? []).map((row) => row.assignment_id as string));
 }
 
 /** Übernimmt alle Einsätze einer Woche in die Folgewoche. */
@@ -71,7 +97,11 @@ export async function copyWeek(
       date: format(addDays(targetWeekStart, offset), 'yyyy-MM-dd'),
       start_time: a.start_time,
       end_time: a.end_time,
-      break_minutes: a.break_minutes,
+      break_minutes: breakMinutesForDate(
+        a.start_time.slice(0, 5),
+        a.end_time.slice(0, 5),
+        addDays(targetWeekStart, offset),
+      ),
       note: a.note,
     };
   });

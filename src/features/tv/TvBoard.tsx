@@ -12,6 +12,7 @@ import {
 } from '../../lib/data.ts';
 import { WEEKDAYS } from '../../lib/hours.ts';
 import { sortEmployees } from '../../lib/users.ts';
+import { colorOf } from '../../lib/colors.ts';
 import Logo from '../../components/Logo.tsx';
 import YearCalendar from './YearCalendar.tsx';
 import type { Employee, Holiday, LeaveRequest, WeekNote } from '../../lib/database.types.ts';
@@ -298,15 +299,24 @@ export function WeekPage({
 
         {/* Eine Zeile je Mitarbeiter */}
         <div className="flex-1 flex flex-col gap-[0.6vh] min-h-0">
-          {employees.map((employee) => (
+          {employees.map((employee) => {
+            const color = colorOf(employee);
+
+            return (
             <div key={employee.id} className="flex gap-[0.6vw] flex-1 min-h-0">
-              <div className="w-[13vw] shrink-0 flex flex-col justify-center pr-2">
-                <p className="text-[1.5vw] font-bold leading-tight truncate">
-                  {employee.first_name}
-                </p>
-                <p className="text-[1.1vw] text-white/40 leading-tight truncate">
-                  {employee.last_name}
-                </p>
+              <div className="w-[13vw] shrink-0 flex items-center gap-[0.5vw] pr-2">
+                <span
+                  className="w-[0.4vw] self-stretch my-[0.6vh] rounded-full shrink-0"
+                  style={{ backgroundColor: color.swatch }}
+                />
+                <div className="min-w-0">
+                  <p className="text-[1.5vw] font-bold leading-tight truncate">
+                    {employee.first_name}
+                  </p>
+                  <p className="text-[1.1vw] text-white/40 leading-tight truncate">
+                    {employee.last_name}
+                  </p>
+                </div>
               </div>
 
               {days.map((day) => {
@@ -326,9 +336,17 @@ export function WeekPage({
                             ? 'bg-red-500/25'
                             : 'bg-brand-accent1/25'
                           : cell.length > 0
-                            ? 'bg-brand-accent2/20'
+                            ? ''
                             : 'bg-white/[0.03]'
                     }`}
+                    // Abwesenheit und Feiertag behalten ihre eigene Farbe: Sie
+                    // sagt aus, dass jemand nicht da ist, und das ist an der
+                    // Wand die wichtigere Auskunft als die Zuordnung zur Zeile.
+                    style={
+                      !day.holiday && !absence && cell.length > 0
+                        ? { backgroundColor: color.dark.background }
+                        : undefined
+                    }
                   >
                     {day.holiday ? (
                       <p className="text-[1.1vw] text-white/50 text-center">{day.holiday.name}</p>
@@ -355,7 +373,8 @@ export function WeekPage({
                 );
               })}
             </div>
-          ))}
+            );
+          })}
 
           {employees.length === 0 && (
             <p className="text-center text-[2vw] text-white/30 mt-[10vh]">

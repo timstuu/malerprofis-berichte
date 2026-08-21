@@ -20,6 +20,7 @@ interface ManageUsersPayload {
   lastName?: string;
   role?: Role;
   remainingLeaveDays?: number;
+  color?: string;
 }
 
 /**
@@ -94,6 +95,7 @@ export async function createUser(input: {
   lastName: string;
   role: Role;
   remainingLeaveDays?: number;
+  color?: string;
 }): Promise<void> {
   await callManageUsers({ action: 'create', ...input });
 }

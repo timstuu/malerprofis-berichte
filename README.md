@@ -22,6 +22,10 @@ Daten liegt vollständig in den Row-Level-Security-Regeln der Datenbank.
    - `0003_realtime.sql` — Live-Aktualisierung für die Büroanzeige
    - `0004_week_notes.sql` — die Hinweiszeile der Wochenplanung. Fehlt sie,
      zeigt die App einfach keine Hinweise an; sie geht davon nicht kaputt
+   - `0005_employee_colors_and_breaks.sql` — Farbe je Mitarbeiter und die
+     Pausenregel nach festen Fenstern (10:00–10:30 und 13:00–13:30, freitags
+     nur die erste). Rechnet die Pause aller bestehenden Einsätze einmalig neu;
+     gespeicherte Wochenberichte bleiben unangetastet
 3. Unter **Project Settings → API** die Projekt-URL und den `anon`-Key notieren.
 
 ### 2. Zugangsdaten hinterlegen

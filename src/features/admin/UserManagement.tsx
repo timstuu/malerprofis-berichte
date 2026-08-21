@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Plus, Trash2, KeyRound, Loader2, ShieldCheck, Monitor, HardHat, RefreshCw, Palmtree } from 'lucide-react';
+import { Plus, Trash2, KeyRound, Loader2, ShieldCheck, Monitor, HardHat, RefreshCw, Palmtree, Check } from 'lucide-react';
+import { EMPLOYEE_COLORS, colorOf, nextFreeColor } from '../../lib/colors.ts';
 import {
   createUser,
   deleteUser,
@@ -44,6 +45,8 @@ export default function UserManagement({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** Id des Mitarbeiters, dessen Farbauswahl gerade offen steht. */
+  const [colorFor, setColorFor] = useState<string | null>(null);
 
   const [email, setEmail] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -79,6 +82,7 @@ export default function UserManagement({
         lastName: lastName.trim(),
         role,
         remainingLeaveDays: leaveDays,
+        color: nextFreeColor(employees),
       });
       setNotice(
         `${firstName} ${lastName} wurde angelegt. Zugangsdaten: ${email.trim()} / ${password}`,
@@ -146,6 +150,24 @@ export default function UserManagement({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+    setBusyId(null);
+  };
+
+  /**
+   * Farbe eines Mitarbeiters setzen. Sie taucht in der Wochenplanung und auf
+   * dem Fernseher an jeder Einsatzkachel auf — daran erkennt man seine Zeile
+   * auch dann noch, wenn die Namensspalte seitlich aus dem Bild gescrollt ist.
+   */
+  const changeColor = async (employee: Employee, color: string) => {
+    setColorFor(null);
+    setError(null);
+    setBusyId(employee.id);
+    const { error: updateError } = await supabase
+      .from('employees')
+      .update({ color })
+      .eq('id', employee.id);
+    if (updateError) setError(updateError.message);
+    else await onChanged();
     setBusyId(null);
   };
 
@@ -351,7 +373,15 @@ export default function UserManagement({
                 }`}
               >
                 <div className="min-w-0 flex items-center gap-3">
-                  <Icon size={18} className="text-[#141414]/30 shrink-0" />
+                  {employee.role === 'tv' ? (
+                    <Icon size={18} className="text-[#141414]/30 shrink-0" />
+                  ) : (
+                    <span
+                      className="w-[18px] h-[18px] rounded-md shrink-0 border border-black/10"
+                      style={{ backgroundColor: colorOf(employee).swatch }}
+                      title={`Farbe: ${colorOf(employee).label}`}
+                    />
+                  )}
                   <div className="min-w-0">
                     <p className="font-semibold text-sm truncate">
                       {employee.first_name} {employee.last_name}
@@ -386,6 +416,19 @@ export default function UserManagement({
                         <option value="admin">Büro</option>
                         <option value="tv">Anzeige</option>
                       </select>
+
+                      {employee.role !== 'tv' && (
+                        <button
+                          onClick={() => setColorFor(colorFor === employee.id ? null : employee.id)}
+                          className="p-2 text-gray-500 hover:text-brand-accent1 hover:bg-gray-50 rounded-xl cursor-pointer"
+                          title="Farbe wählen"
+                        >
+                          <span
+                            className="block w-4 h-4 rounded border border-black/10"
+                            style={{ backgroundColor: colorOf(employee).swatch }}
+                          />
+                        </button>
+                      )}
 
                       {employee.role !== 'tv' && (
                         <button
@@ -425,6 +468,26 @@ export default function UserManagement({
                   )}
                 </div>
               </div>
+
+              {colorFor === employee.id && (
+                <div className="px-4 pb-4 -mt-1">
+                  <div className="flex flex-wrap gap-2 bg-gray-50 border border-gray-100 rounded-2xl p-3">
+                    {EMPLOYEE_COLORS.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => changeColor(employee, c.id)}
+                        title={c.label}
+                        className="w-8 h-8 rounded-lg border border-black/10 flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
+                        style={{ backgroundColor: c.swatch }}
+                      >
+                        {colorOf(employee).id === c.id && (
+                          <Check size={16} className="text-white drop-shadow" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}

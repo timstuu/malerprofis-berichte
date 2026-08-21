@@ -27,6 +27,7 @@ interface Payload {
   lastName?: string;
   role?: Role;
   remainingLeaveDays?: number;
+  color?: string;
 }
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -193,6 +194,7 @@ async function handle(req: Request): Promise<Response> {
         last_name: lastName,
         role,
         remaining_leave_days: payload.remainingLeaveDays ?? 30,
+        color: payload.color ?? null,
       });
 
       if (profileError) {

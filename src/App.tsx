@@ -33,7 +33,6 @@ import {
   Pencil,
   Edit3,
   RotateCcw,
-  Minus,
   Camera,
   Palmtree,
   Settings
@@ -51,7 +50,7 @@ import WeekGrid from './features/planning/WeekGrid.tsx';
 import LeaveView from './features/leave/LeaveView.tsx';
 import PushToggle from './features/leave/PushToggle.tsx';
 import { useAuth } from './lib/auth.tsx';
-import { calculateHours, WEEKDAYS } from './lib/hours.ts';
+import { breakMinutesFor, calculateHours, WEEKDAYS } from './lib/hours.ts';
 import {
   createLeaveRequest,
   decideLeaveRequest,
@@ -95,7 +94,6 @@ interface ReportHistory {
 interface WeekDraft {
   weekStart: string;
   entries: WeeklyEntries;
-  breaks: Record<string, number>;
   savedAt: string;
 }
 
@@ -172,34 +170,6 @@ export default function App() {
     localStorage.setItem('reportHistory', JSON.stringify(updatedHistory));
   };
   const [weeklyEntries, setWeeklyEntries] = useState<WeeklyEntries>(emptyWeek());
-
-  const [weeklyBreaks, setWeeklyBreaks] = useState<Record<string, number>>({
-    Montag: 0,
-    Dienstag: 0,
-    Mittwoch: 0,
-    Donnerstag: 0,
-    Freitag: 0,
-    Samstag: 0,
-    Sonntag: 0,
-  });
-
-  const handleDecreaseBreak = (day: string) => {
-    setWeeklyBreaks(prev => {
-      const current = prev[day] ?? 0;
-      if (current === 60) return { ...prev, [day]: 30 };
-      if (current === 30) return { ...prev, [day]: 0 };
-      return prev;
-    });
-  };
-
-  const handleIncreaseBreak = (day: string) => {
-    setWeeklyBreaks(prev => {
-      const current = prev[day] ?? 0;
-      if (current === 0) return { ...prev, [day]: 30 };
-      if (current === 30) return { ...prev, [day]: 60 };
-      return prev;
-    });
-  };
 
   const [abnahme, setAbnahme] = useState<{
     address: string;
@@ -458,7 +428,6 @@ export default function App() {
       let base: WeeklyEntries;
       if (draft) {
         base = draft.entries;
-        setWeeklyBreaks(draft.breaks);
       } else if (remote) {
         base = remote.entries;
       } else {
@@ -504,11 +473,10 @@ export default function App() {
     const draft: WeekDraft = {
       weekStart: weekKey(selectedWeek),
       entries: weeklyEntries,
-      breaks: weeklyBreaks,
       savedAt: new Date().toISOString(),
     };
     localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
-  }, [weeklyEntries, weeklyBreaks, weekLoading, selectedWeek]);
+  }, [weeklyEntries, weekLoading, selectedWeek]);
 
   const persistWeek = React.useCallback(
     async (options: { signature?: string | null; sign?: boolean } = {}) => {
@@ -759,15 +727,6 @@ export default function App() {
       Freitag: { entries: [] },
       Samstag: { entries: [] },
       Sonntag: { entries: [] },
-    });
-    setWeeklyBreaks({
-      Montag: 0,
-      Dienstag: 0,
-      Mittwoch: 0,
-      Donnerstag: 0,
-      Freitag: 0,
-      Samstag: 0,
-      Sonntag: 0,
     });
   };
 
@@ -1380,31 +1339,6 @@ export default function App() {
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between bg-gray-50 p-3 rounded-xl border border-gray-100 mt-1">
-                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Mit Pause</span>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleDecreaseBreak(day)}
-                              className="w-8 h-8 flex items-center justify-center bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors cursor-pointer"
-                              title="Pause verringern"
-                            >
-                              <Minus className="w-3.5 h-3.5" />
-                            </button>
-                            <span className="text-xs font-bold text-gray-700 min-w-[70px] text-center">
-                              {weeklyBreaks[day] ?? 0} Minuten
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleIncreaseBreak(day)}
-                              className="w-8 h-8 flex items-center justify-center bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors cursor-pointer"
-                              title="Pause verlängern"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                        
                         {(() => {
                           const daysOrder = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
                           const prevDay = index > 0 ? daysOrder[index - 1] : null;
@@ -1452,7 +1386,11 @@ export default function App() {
                             return;
                           }
 
-                          const breakMins = weeklyBreaks[day] ?? 0;
+                          // Die Pause liegt zu festen Uhrzeiten und wird nicht
+                          // eingegeben: Abgezogen wird, was der Einsatz davon
+                          // überdeckt. Zwei Baustellen an einem Tag ziehen
+                          // dieselbe Pause deshalb nicht doppelt ab.
+                          const breakMins = breakMinutesFor(startTime, endTime, day as typeof WEEKDAYS[number]);
                           const hours = calculateHours(startTime, endTime, breakMins);
 
                           if (hours <= 0) {
@@ -1467,8 +1405,6 @@ export default function App() {
                           (document.getElementById(`desc-${day}`) as HTMLInputElement).value = '';
                           (document.getElementById(`start-${day}`) as HTMLInputElement).value = '';
                           (document.getElementById(`end-${day}`) as HTMLInputElement).value = '';
-                          
-                          setWeeklyBreaks(prev => ({ ...prev, [day]: 0 }));
                         }} className="w-full bg-brand-accent2 text-white p-2 rounded-xl font-bold hover:bg-brand-accent2/90 cursor-pointer">Baustelle hinzufügen</button>
                       </div>
                     </div>
