@@ -7,6 +7,8 @@ import {
   fetchEmployees,
   fetchHolidays,
   fetchLeaveRequests,
+  fetchTradeEntries,
+  fetchTradeRows,
   fetchWeekNotes,
   type AssignmentRow,
 } from '../../lib/data.ts';
@@ -15,7 +17,14 @@ import { sortEmployees } from '../../lib/users.ts';
 import { colorOf } from '../../lib/colors.ts';
 import Logo from '../../components/Logo.tsx';
 import YearCalendar from './YearCalendar.tsx';
-import type { Employee, Holiday, LeaveRequest, WeekNote } from '../../lib/database.types.ts';
+import type {
+  Employee,
+  Holiday,
+  LeaveRequest,
+  TradeEntryRow,
+  TradeRow,
+  WeekNote,
+} from '../../lib/database.types.ts';
 
 /**
  * Anzeige für den Fernseher im Büro.
@@ -45,6 +54,8 @@ export default function TvBoard() {
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [weekNotes, setWeekNotes] = useState<WeekNote[]>([]);
+  const [tradeRows, setTradeRows] = useState<TradeRow[]>([]);
+  const [tradeEntries, setTradeEntries] = useState<TradeEntryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
@@ -52,7 +63,7 @@ export default function TvBoard() {
 
   const load = useCallback(async () => {
     try {
-      const [emp, assign, leaves, holidayList, notes] = await Promise.all([
+      const [emp, assign, leaves, holidayList, notes, rows, entries] = await Promise.all([
         fetchEmployees(),
         fetchAssignments(
           format(weekStart, 'yyyy-MM-dd'),
@@ -61,6 +72,11 @@ export default function TvBoard() {
         fetchLeaveRequests(),
         fetchHolidays(`${year}-01-01`, `${year}-12-31`),
         fetchWeekNotes(
+          format(weekStart, 'yyyy-MM-dd'),
+          format(addDays(weekStart, 6), 'yyyy-MM-dd'),
+        ),
+        fetchTradeRows(format(weekStart, 'yyyy-MM-dd')),
+        fetchTradeEntries(
           format(weekStart, 'yyyy-MM-dd'),
           format(addDays(weekStart, 6), 'yyyy-MM-dd'),
         ),
@@ -73,6 +89,8 @@ export default function TvBoard() {
       setLeaveRequests(leaves);
       setHolidays(holidayList);
       setWeekNotes(notes);
+      setTradeRows(rows);
+      setTradeEntries(entries);
       setUpdatedAt(new Date());
       setError(null);
     } catch (e) {
@@ -93,6 +111,8 @@ export default function TvBoard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'assignments' }, () => load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, () => load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'week_notes' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trade_rows' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trade_entries' }, () => load())
       .subscribe();
 
     const timer = window.setInterval(load, 30 * 60 * 1000);
@@ -153,6 +173,8 @@ export default function TvBoard() {
           leaveRequests={leaveRequests}
           holidays={holidays}
           weekNotes={weekNotes}
+          tradeRows={tradeRows}
+          tradeEntries={tradeEntries}
         />
       )}
       {page === 2 && (
@@ -214,6 +236,8 @@ export function WeekPage({
   leaveRequests,
   holidays,
   weekNotes = [],
+  tradeRows = [],
+  tradeEntries = [],
 }: {
   weekStart: Date;
   employees: Employee[];
@@ -221,6 +245,8 @@ export function WeekPage({
   leaveRequests: LeaveRequest[];
   holidays: Holiday[];
   weekNotes?: WeekNote[];
+  tradeRows?: TradeRow[];
+  tradeEntries?: TradeEntryRow[];
 }) {
   const days = WEEKDAYS.slice(0, 5).map((label, index) => {
     const date = addDays(weekStart, index);
@@ -239,6 +265,15 @@ export function WeekPage({
   // rechnet mit fester Höhe: Eine dauerhaft leere Zeile nähme jeder
   // Mitarbeiterzeile Platz weg, den sie für die Baustellennamen braucht.
   const hasNotes = days.some((day) => day.note);
+
+  // Nur Gewerke zeigen, die diese Woche auch etwas zu sagen haben: Das Layout
+  // rechnet mit fester Höhe, jede zusätzliche Zeile nimmt allen Mitarbeitern
+  // Platz weg — auch an Tagen, an denen kein Tischler eingeplant ist.
+  const activeTrades = tradeRows.filter((row) =>
+    tradeEntries.some(
+      (entry) => entry.trade_row_id === row.id && days.some((day) => day.iso === entry.date),
+    ),
+  );
 
   const absenceOn = (employeeId: string, iso: string) =>
     leaveRequests.find(
@@ -375,6 +410,47 @@ export function WeekPage({
             </div>
             );
           })}
+
+          {activeTrades.map((row) => (
+            <div key={row.id} className="flex gap-[0.6vw] flex-1 min-h-0">
+              <div className="w-[13vw] shrink-0 flex items-center gap-[0.5vw] pr-2">
+                <span className="w-[0.4vw] self-stretch my-[0.6vh] rounded-full shrink-0 bg-white/25" />
+                <div className="min-w-0">
+                  <p className="text-[1.3vw] font-bold leading-tight truncate text-white/75">
+                    {row.name}
+                  </p>
+                  <p className="text-[0.9vw] text-white/30 leading-tight">Fremdgewerk</p>
+                </div>
+              </div>
+
+              {days.map((day) => {
+                const cell = tradeEntries.filter(
+                  (e) => e.trade_row_id === row.id && e.date === day.iso,
+                );
+
+                return (
+                  <div
+                    key={day.iso}
+                    className={`flex-1 min-w-0 rounded-lg p-[0.5vw] flex flex-col justify-center gap-[0.4vh] ${
+                      cell.length > 0 ? 'bg-white/10' : 'bg-white/[0.03]'
+                    }`}
+                  >
+                    {cell.map((entry) => (
+                      <div key={entry.id} className="min-w-0">
+                        <p className="text-[1.1vw] font-bold leading-[1.15] line-clamp-2 text-white/80">
+                          {entry.sites?.address}
+                        </p>
+                        <p className="text-[0.9vw] text-white/40 leading-tight truncate">
+                          {entry.sites?.number}
+                          {entry.note && ` · ${entry.note}`}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
 
           {employees.length === 0 && (
             <p className="text-center text-[2vw] text-white/30 mt-[10vh]">

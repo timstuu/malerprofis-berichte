@@ -2,8 +2,22 @@ import { useEffect, useRef, useState } from 'react';
 import { addDays, addWeeks, format, subWeeks } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { motion } from 'motion/react';
-import { ChevronLeft, ChevronRight, Plus, Trash2, Copy, Loader2, Pencil, Check } from 'lucide-react';
-import { fetchAssignments, fetchWeekNotes, saveWeekNote, type AssignmentRow } from '../../lib/data.ts';
+import { ChevronLeft, ChevronRight, Plus, Trash2, Copy, Loader2, Pencil, Check, Wrench } from 'lucide-react';
+import {
+  copyTradeRowsToWeek,
+  createTradeEntry,
+  createTradeRow,
+  deleteTradeEntry,
+  deleteTradeRow,
+  fetchAssignments,
+  fetchTradeEntries,
+  fetchTradeRows,
+  fetchWeekNotes,
+  moveTradeEntry,
+  renameTradeRow,
+  saveWeekNote,
+  type AssignmentRow,
+} from '../../lib/data.ts';
 import {
   copyWeek,
   createAssignments,
@@ -14,7 +28,13 @@ import {
 import { WEEKDAYS, breakMinutesForDate, defaultShiftFor, weekdayOf } from '../../lib/hours.ts';
 import { sortEmployees } from '../../lib/users.ts';
 import { colorOf } from '../../lib/colors.ts';
-import type { Employee, Site, WeekNote } from '../../lib/database.types.ts';
+import type {
+  Employee,
+  Site,
+  TradeEntryRow,
+  TradeRow,
+  WeekNote,
+} from '../../lib/database.types.ts';
 
 /**
  * Einsatzplanung des Büros: Mitarbeiter als Zeilen, Wochentage als Spalten.
@@ -50,6 +70,9 @@ export default function WeekGrid({
   });
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [notes, setNotes] = useState<WeekNote[]>([]);
+  const [tradeRows, setTradeRows] = useState<TradeRow[]>([]);
+  const [tradeEntries, setTradeEntries] = useState<TradeEntryRow[]>([]);
+  const [tradeEditing, setTradeEditing] = useState<{ rowId: string; date: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ employeeId: string; date: string } | null>(null);
@@ -75,12 +98,18 @@ export default function WeekGrid({
   const load = async () => {
     setLoading(true);
     try {
-      const [assign, weekNotes] = await Promise.all([
-        fetchAssignments(format(weekStart, 'yyyy-MM-dd'), format(weekEnd, 'yyyy-MM-dd')),
-        fetchWeekNotes(format(weekStart, 'yyyy-MM-dd'), format(weekEnd, 'yyyy-MM-dd')),
+      const from = format(weekStart, 'yyyy-MM-dd');
+      const to = format(weekEnd, 'yyyy-MM-dd');
+      const [assign, weekNotes, rows, entries] = await Promise.all([
+        fetchAssignments(from, to),
+        fetchWeekNotes(from, to),
+        fetchTradeRows(from),
+        fetchTradeEntries(from, to),
       ]);
       setAssignments(assign);
       setNotes(weekNotes);
+      setTradeRows(rows);
+      setTradeEntries(entries);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -91,6 +120,7 @@ export default function WeekGrid({
   useEffect(() => {
     load();
     setEditing(null);
+    setTradeEditing(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekStart]);
 
@@ -181,6 +211,33 @@ export default function WeekGrid({
     }
   };
 
+  // --- Fremdgewerke ------------------------------------------------------
+
+  const tradeCell = (rowId: string, date: string) =>
+    tradeEntries.filter((e) => e.trade_row_id === rowId && e.date === date);
+
+  const run = async (action: () => Promise<unknown>) => {
+    try {
+      await action();
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const addTradeRow = async () => {
+    const name = prompt('Welches Gewerk? (z. B. Hebebühne, Tischler)');
+    if (name === null || !name.trim()) return;
+    await run(() => createTradeRow(format(weekStart, 'yyyy-MM-dd'), name.trim()));
+  };
+
+  const removeTradeRow = async (row: TradeRow) => {
+    const count = tradeEntries.filter((e) => e.trade_row_id === row.id).length;
+    const warning = count > 0 ? `\n\n${count} ${count === 1 ? 'Eintrag' : 'Einträge'} verschwinden mit.` : '';
+    if (!confirm(`Zeile „${row.name}“ entfernen?${warning}`)) return;
+    await run(() => deleteTradeRow(row.id));
+  };
+
   const duplicatePreviousWeek = async () => {
     const previousStart = subWeeks(weekStart, 1);
     try {
@@ -194,6 +251,13 @@ export default function WeekGrid({
       }
       if (!confirm(`${previous.length} Einsätze aus der Vorwoche übernehmen?`)) return;
       await copyWeek(previous, weekStart, previousStart);
+      // Die Gewerk-Zeilen gelten nur für ihre Woche. Ohne diese Übernahme
+      // müsste der Gerüstbauer, der jeden Montag kommt, jede Woche neu
+      // eingetippt werden.
+      await copyTradeRowsToWeek(
+        format(previousStart, 'yyyy-MM-dd'),
+        format(weekStart, 'yyyy-MM-dd'),
+      );
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -212,6 +276,29 @@ export default function WeekGrid({
       if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
         const [employeeId, date] = key.split('|');
         return { employeeId, date };
+      }
+    }
+    return null;
+  };
+
+  /**
+   * Rechtecke der Gewerk-Zellen, getrennt von denen der Mitarbeiter: Eine
+   * Kachel darf nur in ihrer eigenen Art landen. Eine Mitarbeiterkachel trägt
+   * Uhrzeiten und Pause, eine Gewerkkachel eine Notiz — beim Wechsel ginge das
+   * eine verloren und das andere müsste erfunden werden.
+   */
+  const tradeRects = useRef(new Map<string, DOMRect>());
+
+  const registerTradeCell = (key: string) => (node: HTMLDivElement | null) => {
+    if (node) tradeRects.current.set(key, node.getBoundingClientRect());
+    else tradeRects.current.delete(key);
+  };
+
+  const tradeCellAt = (x: number, y: number): { rowId: string; date: string } | null => {
+    for (const [key, rect] of tradeRects.current) {
+      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+        const [rowId, date] = key.split('|');
+        return { rowId, date };
       }
     }
     return null;
@@ -439,6 +526,140 @@ export default function WeekGrid({
               </div>
             );
           })}
+
+          {/* Fremdgewerke — Hebebühne, Tischler, Gerüstbauer. Stehen unter den
+              eigenen Leuten, gelten nur für diese Woche und haben bewusst keine
+              Uhrzeiten: Für ein Fremdgewerk rechnet niemand Stunden ab. */}
+          {tradeRows.map((row) => (
+            <div
+              key={row.id}
+              className="grid border-t border-[#141414]/5 bg-gray-50/40"
+              style={{ gridTemplateColumns: gridTemplate }}
+            >
+              <div className="p-3 flex items-start gap-2">
+                <Wrench size={14} className="text-gray-400 shrink-0 mt-0.5" />
+                <div className="min-w-0 flex-1">
+                  {readOnly ? (
+                    <p className="font-semibold text-sm truncate text-gray-700">{row.name}</p>
+                  ) : (
+                    <input
+                      key={`${row.id}-${row.name}`}
+                      defaultValue={row.name}
+                      onBlur={(e) => {
+                        const next = e.target.value.trim();
+                        if (next && next !== row.name) run(() => renameTradeRow(row.id, next));
+                      }}
+                      className="w-full font-semibold text-sm bg-transparent border-b border-transparent hover:border-gray-300 focus:border-gray-400 focus:outline-none text-gray-700"
+                    />
+                  )}
+                  <span className="text-[10px] font-bold uppercase text-gray-400">Fremdgewerk</span>
+                </div>
+                {!readOnly && (
+                  <button
+                    onClick={() => removeTradeRow(row)}
+                    className="p-1 text-gray-300 hover:text-red-500 rounded-md cursor-pointer shrink-0"
+                    title="Zeile entfernen"
+                    aria-label="Gewerk-Zeile entfernen"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+
+              {days.map((day) => {
+                const key = `${row.id}|${day.iso}`;
+                const cell = tradeCell(row.id, day.iso);
+                const isEditing = tradeEditing?.rowId === row.id && tradeEditing?.date === day.iso;
+
+                return (
+                  <div
+                    key={day.iso}
+                    ref={registerTradeCell(key)}
+                    className={`p-2 min-h-[4.5rem] transition-colors ${
+                      dropTarget === key ? 'bg-gray-200/60' : ''
+                    }`}
+                  >
+                    <div className="space-y-1">
+                      {cell.map((entry) => (
+                        <TradeTile
+                          key={entry.id}
+                          entry={entry}
+                          readOnly={readOnly}
+                          onDragMove={(x, y) => {
+                            const target = tradeCellAt(x, y);
+                            setDropTarget(target ? `${target.rowId}|${target.date}` : null);
+                          }}
+                          onDragEnd={(x, y) => {
+                            setDropTarget(null);
+                            const target = tradeCellAt(x, y);
+                            if (!target) return;
+                            if (target.rowId === entry.trade_row_id && target.date === entry.date) return;
+                            run(() =>
+                              moveTradeEntry(entry.id, {
+                                tradeRowId: target.rowId,
+                                date: target.date,
+                              }),
+                            );
+                          }}
+                          onDelete={() => {
+                            if (!confirm(`Eintrag „${entry.sites?.address ?? ''}“ löschen?`)) return;
+                            run(() => deleteTradeEntry(entry.id));
+                          }}
+                          onDuplicate={() =>
+                            run(() =>
+                              createTradeEntry({
+                                trade_row_id: entry.trade_row_id,
+                                date: entry.date,
+                                site_id: entry.site_id,
+                                note: entry.note,
+                              }),
+                            )
+                          }
+                        />
+                      ))}
+
+                      {!readOnly &&
+                        (isEditing ? (
+                          <TradeEntryForm
+                            sites={sites}
+                            onCancel={() => setTradeEditing(null)}
+                            onSave={async (siteId, note) => {
+                              setTradeEditing(null);
+                              await run(() =>
+                                createTradeEntry({
+                                  trade_row_id: row.id,
+                                  date: day.iso,
+                                  site_id: siteId,
+                                  note,
+                                }),
+                              );
+                            }}
+                          />
+                        ) : (
+                          <button
+                            onClick={() => setTradeEditing({ rowId: row.id, date: day.iso })}
+                            className="w-full flex items-center justify-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 hover:bg-gray-100 border border-dashed border-gray-200 rounded-xl py-1.5 cursor-pointer"
+                          >
+                            <Plus size={12} /> Eintrag
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+
+          {!readOnly && (
+            <div className="border-t border-[#141414]/5 p-3">
+              <button
+                onClick={addTradeRow}
+                className="flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-[#141414] bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-xl cursor-pointer"
+              >
+                <Plus size={14} /> Gewerk
+              </button>
+            </div>
+          )}
         </div>
 
         {workers.length === 0 && (
@@ -544,6 +765,139 @@ function AssignmentTile({
         </button>
       </div>
     </motion.div>
+  );
+}
+
+
+/**
+ * Kachel eines Fremdgewerks. Einheitlich grau statt in einer Mitarbeiterfarbe:
+ * Auf einen Blick soll unterscheidbar sein, wer die eigenen Leute sind — und
+ * die zwölf Palettenfarben bleiben den Malern.
+ */
+function TradeTile({
+  entry,
+  readOnly,
+  onDragMove,
+  onDragEnd,
+  onDelete,
+  onDuplicate,
+}: {
+  entry: TradeEntryRow;
+  readOnly: boolean;
+  onDragMove: (x: number, y: number) => void;
+  onDragEnd: (x: number, y: number) => void;
+  onDelete: () => void;
+  onDuplicate: () => void;
+}) {
+  const body = (
+    <>
+      <p className="font-bold truncate text-gray-600">{entry.sites?.number}</p>
+      <p className="text-[#141414]/70 truncate">{entry.sites?.address}</p>
+      {entry.note && <p className="text-[#141414]/50 text-[10px] leading-tight">{entry.note}</p>}
+    </>
+  );
+
+  if (readOnly) {
+    return (
+      <div className="rounded-xl px-2 py-1.5 text-xs border border-gray-200 bg-gray-100">
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <motion.div
+      drag
+      dragSnapToOrigin
+      dragMomentum={false}
+      dragElastic={0}
+      onDrag={(_, info) => onDragMove(info.point.x, info.point.y)}
+      onDragEnd={(_, info) => onDragEnd(info.point.x, info.point.y)}
+      whileDrag={{ scale: 1.04, zIndex: 50, cursor: 'grabbing' }}
+      className="relative rounded-xl px-2 py-1.5 text-xs border border-gray-200 bg-gray-100 cursor-grab touch-none select-none"
+    >
+      {body}
+
+      <div className="flex items-center gap-1 mt-1">
+        <button
+          onPointerDownCapture={(e) => e.stopPropagation()}
+          onClick={onDuplicate}
+          className="p-1 rounded-md text-[#141414]/40 hover:text-[#141414] hover:bg-white/70 cursor-pointer"
+          title="Eintrag duplizieren"
+          aria-label="Eintrag duplizieren"
+        >
+          <Copy size={12} />
+        </button>
+        <button
+          onPointerDownCapture={(e) => e.stopPropagation()}
+          onClick={onDelete}
+          className="p-1 rounded-md text-[#141414]/40 hover:text-red-500 hover:bg-white/70 cursor-pointer"
+          title="Eintrag löschen"
+          aria-label="Eintrag löschen"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+/** Baustelle und ein freier Text — Uhrzeiten hat ein Fremdgewerk nicht. */
+function TradeEntryForm({
+  sites,
+  onCancel,
+  onSave,
+}: {
+  sites: Site[];
+  onCancel: () => void;
+  onSave: (siteId: string, note: string | null) => Promise<void>;
+}) {
+  const [siteId, setSiteId] = useState(sites.find((s) => !s.is_absence_code)?.id ?? '');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-2 space-y-1.5">
+      <select
+        value={siteId}
+        onChange={(e) => setSiteId(e.target.value)}
+        className="w-full text-[11px] p-1.5 bg-white border border-gray-200 rounded-lg"
+      >
+        {sites.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.number} · {s.address}
+          </option>
+        ))}
+      </select>
+
+      <input
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Notiz (z. B. ab 10 Uhr)"
+        className="w-full text-[11px] p-1.5 bg-white border border-gray-200 rounded-lg"
+      />
+
+      <div className="flex gap-1 pt-1">
+        <button
+          onClick={async () => {
+            if (!siteId) return;
+            setBusy(true);
+            await onSave(siteId, note.trim() || null);
+            setBusy(false);
+          }}
+          disabled={busy}
+          className="flex-1 bg-gray-600 text-white text-[11px] font-bold py-1.5 rounded-lg disabled:opacity-60 cursor-pointer"
+        >
+          {busy ? '…' : 'Speichern'}
+        </button>
+        <button
+          onClick={onCancel}
+          className="flex-1 bg-gray-200 text-[11px] font-bold py-1.5 rounded-lg cursor-pointer"
+        >
+          Abbruch
+        </button>
+      </div>
+    </div>
   );
 }
 

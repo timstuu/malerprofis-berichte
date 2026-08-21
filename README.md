@@ -26,6 +26,8 @@ Daten liegt vollständig in den Row-Level-Security-Regeln der Datenbank.
      Pausenregel nach festen Fenstern (10:00–10:30 und 13:00–13:30, freitags
      nur die erste). Rechnet die Pause aller bestehenden Einsätze einmalig neu;
      gespeicherte Wochenberichte bleiben unangetastet
+   - `0006_trade_rows.sql` — Zeilen für Fremdgewerke (Hebebühne, Tischler) in
+     der Wochenplanung. Fehlt sie, zeigt die App einfach keine Gewerke an
 3. Unter **Project Settings → API** die Projekt-URL und den `anon`-Key notieren.
 
 ### 2. Zugangsdaten hinterlegen

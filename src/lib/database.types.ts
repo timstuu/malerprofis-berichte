@@ -87,6 +87,32 @@ export interface LeaveRequest {
   created_at?: string;
 }
 
+/**
+ * Eine Zeile für ein Fremdgewerk in der Wochenplanung — Hebebühne, Tischler,
+ * Gerüstbauer. Gilt nur für ihre Woche; kein Mitarbeiter, kein Anmeldekonto.
+ */
+export interface TradeRow {
+  id: string;
+  week_start: string; // yyyy-MM-dd, ISO-Montag
+  name: string;
+  created_at?: string;
+}
+
+/** Ein Eintrag einer Gewerk-Zeile: Baustelle an einem Tag, dazu eine Notiz. */
+export interface TradeEntry {
+  id: string;
+  trade_row_id: string;
+  date: string;
+  site_id: string;
+  note: string | null;
+  created_at?: string;
+}
+
+/** Gewerk-Eintrag mit den Stammdaten seiner Baustelle. */
+export interface TradeEntryRow extends TradeEntry {
+  sites: { number: string; address: string } | null;
+}
+
 /** Ein freier Hinweis für einen Kalendertag, gültig für den ganzen Betrieb. */
 export interface WeekNote {
   date: string; // yyyy-MM-dd

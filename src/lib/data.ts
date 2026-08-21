@@ -8,6 +8,8 @@ import type {
   LeaveRequest,
   LeaveStatus,
   Site,
+  TradeEntryRow,
+  TradeRow,
   WeekNote,
 } from './database.types.ts';
 
@@ -168,11 +170,11 @@ export async function fetchAssignments(from: string, to: string): Promise<Assign
  *
  * Nach der Migration greift der Normalfall von selbst — nichts weiter zu tun.
  */
-function isMissingTable(error: { code?: string; message: string }): boolean {
+function isMissingTable(error: { code?: string; message: string }, table: string): boolean {
   return (
     error.code === '42P01' || // Postgres: relation does not exist
     error.code === 'PGRST205' || // PostgREST: nicht im Schema-Cache
-    /week_notes/.test(error.message)
+    error.message.includes(table)
   );
 }
 
@@ -185,7 +187,7 @@ export async function fetchWeekNotes(from: string, to: string): Promise<WeekNote
     .order('date');
 
   if (error) {
-    if (isMissingTable(error)) return [];
+    if (isMissingTable(error, 'week_notes')) return [];
     throw new Error(`Hinweise konnten nicht geladen werden: ${error.message}`);
   }
   return (data ?? []) as WeekNote[];
@@ -209,7 +211,7 @@ export async function saveWeekNote(date: string, text: string, employeeId: strin
     : await supabase.from('week_notes').delete().eq('date', date);
 
   if (error) {
-    if (isMissingTable(error)) {
+    if (isMissingTable(error, 'week_notes')) {
       throw new Error(
         'Die Hinweiszeile ist in der Datenbank noch nicht angelegt. Bitte einmalig ' +
           'supabase/migrations/0004_week_notes.sql im Supabase-SQL-Editor ausführen.',
@@ -217,6 +219,165 @@ export async function saveWeekNote(date: string, text: string, employeeId: strin
     }
     throw new Error(`Hinweis konnte nicht gespeichert werden: ${error.message}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Fremdgewerke
+// ---------------------------------------------------------------------------
+
+/**
+ * Wie bei den Hinweisen gilt: Fehlt die Tabelle noch, gibt es eben keine
+ * Gewerke. Die App liegt auf GitHub Pages und ist mit dem Push sofort aktuell,
+ * das SQL wird von Hand nachgezogen — dazwischen darf niemand eine
+ * Fehlermeldung auf dem Planungsschirm sehen.
+ */
+const MISSING_TRADES =
+  'Die Gewerk-Zeilen sind in der Datenbank noch nicht angelegt. Bitte einmalig ' +
+  'supabase/migrations/0006_trade_rows.sql im Supabase-SQL-Editor ausführen.';
+
+export async function fetchTradeRows(weekStart: string): Promise<TradeRow[]> {
+  const { data, error } = await supabase
+    .from('trade_rows')
+    .select('*')
+    .eq('week_start', weekStart)
+    .order('created_at');
+
+  if (error) {
+    if (isMissingTable(error, 'trade_rows')) return [];
+    throw new Error(`Gewerke konnten nicht geladen werden: ${error.message}`);
+  }
+  return (data ?? []) as TradeRow[];
+}
+
+export async function fetchTradeEntries(from: string, to: string): Promise<TradeEntryRow[]> {
+  const { data, error } = await supabase
+    .from('trade_entries')
+    .select('*, sites(number, address)')
+    .gte('date', from)
+    .lte('date', to)
+    .order('date');
+
+  if (error) {
+    if (isMissingTable(error, 'trade_entries')) return [];
+    throw new Error(`Gewerk-Einträge konnten nicht geladen werden: ${error.message}`);
+  }
+  return (data ?? []) as TradeEntryRow[];
+}
+
+export async function createTradeRow(weekStart: string, name: string): Promise<void> {
+  const { error } = await supabase.from('trade_rows').insert({ week_start: weekStart, name });
+  if (error) {
+    throw new Error(
+      isMissingTable(error, 'trade_rows')
+        ? MISSING_TRADES
+        : `Gewerk konnte nicht angelegt werden: ${error.message}`,
+    );
+  }
+}
+
+export async function renameTradeRow(id: string, name: string): Promise<void> {
+  const { error } = await supabase.from('trade_rows').update({ name }).eq('id', id);
+  if (error) throw new Error(`Gewerk konnte nicht umbenannt werden: ${error.message}`);
+}
+
+/** Löscht die Zeile samt ihrer Einträge (per ON DELETE CASCADE). */
+export async function deleteTradeRow(id: string): Promise<void> {
+  const { error } = await supabase.from('trade_rows').delete().eq('id', id);
+  if (error) throw new Error(`Gewerk konnte nicht entfernt werden: ${error.message}`);
+}
+
+export async function createTradeEntry(input: {
+  trade_row_id: string;
+  date: string;
+  site_id: string;
+  note: string | null;
+}): Promise<void> {
+  const { error } = await supabase.from('trade_entries').insert(input);
+  if (error) throw new Error(`Eintrag konnte nicht gespeichert werden: ${error.message}`);
+}
+
+export async function deleteTradeEntry(id: string): Promise<void> {
+  const { error } = await supabase.from('trade_entries').delete().eq('id', id);
+  if (error) throw new Error(`Eintrag konnte nicht gelöscht werden: ${error.message}`);
+}
+
+/** Verschiebt einen Eintrag auf einen anderen Tag und/oder in eine andere Zeile. */
+export async function moveTradeEntry(
+  id: string,
+  target: { tradeRowId: string; date: string },
+): Promise<void> {
+  const { error } = await supabase
+    .from('trade_entries')
+    .update({ trade_row_id: target.tradeRowId, date: target.date })
+    .eq('id', id);
+  if (error) throw new Error(`Eintrag konnte nicht verschoben werden: ${error.message}`);
+}
+
+/**
+ * Übernimmt die Gewerk-Zeilen einer Woche in eine andere.
+ *
+ * Ohne das wäre „nur für diese Woche“ eine Schikane: Der Gerüstbauer, der jeden
+ * Montag kommt, müsste jede Woche neu getippt werden.
+ */
+export async function copyTradeRowsToWeek(
+  sourceWeekStart: string,
+  targetWeekStart: string,
+): Promise<number> {
+  const rows = await fetchTradeRows(sourceWeekStart);
+  if (rows.length === 0) return 0;
+
+  const dayOffset = Math.round(
+    (new Date(`${targetWeekStart}T00:00:00`).getTime() -
+      new Date(`${sourceWeekStart}T00:00:00`).getTime()) /
+      86_400_000,
+  );
+
+  const sourceEnd = new Date(`${sourceWeekStart}T00:00:00`);
+  sourceEnd.setDate(sourceEnd.getDate() + 6);
+  const entries = await fetchTradeEntries(sourceWeekStart, isoDate(sourceEnd));
+
+  const { data: created, error } = await supabase
+    .from('trade_rows')
+    .insert(rows.map((r) => ({ week_start: targetWeekStart, name: r.name })))
+    .select('id');
+
+  if (error) throw new Error(`Gewerke konnten nicht übernommen werden: ${error.message}`);
+
+  // Die Kopien haben neue Schlüssel. Postgres liefert sie in der Reihenfolge
+  // zurück, in der sie eingefügt wurden — darüber laufen die Einträge mit.
+  const newIdByOldId = new Map<string, string>();
+  rows.forEach((row, i) => {
+    const match = (created ?? [])[i];
+    if (match) newIdByOldId.set(row.id, match.id as string);
+  });
+
+  const copies = entries
+    .filter((e) => newIdByOldId.has(e.trade_row_id))
+    .map((e) => ({
+      trade_row_id: newIdByOldId.get(e.trade_row_id) as string,
+      date: shiftDate(e.date, dayOffset),
+      site_id: e.site_id,
+      note: e.note,
+    }));
+
+  if (copies.length > 0) {
+    const { error: entryError } = await supabase.from('trade_entries').insert(copies);
+    if (entryError) {
+      throw new Error(`Gewerk-Einträge konnten nicht übernommen werden: ${entryError.message}`);
+    }
+  }
+  return rows.length;
+}
+
+function isoDate(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function shiftDate(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return isoDate(d);
 }
 
 // ---------------------------------------------------------------------------
