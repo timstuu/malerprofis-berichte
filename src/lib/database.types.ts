@@ -39,6 +39,10 @@ export interface Assignment {
   start_time: string; // HH:MM:SS
   end_time: string;
   break_minutes: number;
+  /**
+   * Hinweis des Büros an den Maler, z. B. „Kunde ab 10 Uhr da“. Steht nur im
+   * Planungsraster — der Wochenbericht übernimmt ihn bewusst nicht.
+   */
   note: string | null;
   created_by: string | null;
   created_at?: string;

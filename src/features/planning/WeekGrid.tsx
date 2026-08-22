@@ -2,7 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 import { addDays, addWeeks, format, subWeeks } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { motion } from 'motion/react';
-import { ChevronLeft, ChevronRight, Plus, Trash2, Copy, Loader2, Pencil, Check, Wrench } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Trash2,
+  Copy,
+  Loader2,
+  Pencil,
+  Check,
+  Wrench,
+  StickyNote,
+} from 'lucide-react';
 import {
   copyTradeRowsToWeek,
   createTradeEntry,
@@ -24,6 +35,7 @@ import {
   deleteAssignment,
   fetchImportedAssignmentIds,
   moveAssignment,
+  updateAssignmentNote,
 } from '../../lib/planning.ts';
 import { WEEKDAYS, breakMinutesForDate, defaultShiftFor, weekdayOf } from '../../lib/hours.ts';
 import { sortEmployees } from '../../lib/users.ts';
@@ -495,6 +507,7 @@ export default function WeekGrid({
                             }}
                             onDelete={() => remove(a)}
                             onDuplicate={() => duplicate(a)}
+                            onNote={(note) => run(() => updateAssignmentNote(a.id, note))}
                           />
                         ))}
 
@@ -677,6 +690,9 @@ export default function WeekGrid({
  * auf eine andere Zelle ziehen; die Farbe ist die des Mitarbeiters, damit man
  * seine Zeile auch dann wiederfindet, wenn die Namensspalte seitlich aus dem
  * Bild gescrollt ist.
+ *
+ * Die Notiz steht unter den Uhrzeiten und wird bewusst nicht abgeschnitten: Ein
+ * halber Hinweis („Kunde ab …“) ist schlimmer als gar keiner.
  */
 function AssignmentTile({
   assignment,
@@ -688,6 +704,7 @@ function AssignmentTile({
   onDragEnd,
   onDelete,
   onDuplicate,
+  onNote,
 }: {
   assignment: AssignmentRow;
   color: ReturnType<typeof colorOf>;
@@ -698,7 +715,21 @@ function AssignmentTile({
   onDragEnd: (x: number, y: number) => void;
   onDelete: () => void;
   onDuplicate: () => void;
+  onNote: (note: string | null) => void;
 }) {
+  /** `null` = nicht in Bearbeitung; ein String ist der laufende Entwurf. */
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const commitNote = () => {
+    // Nach dem Abbruch mit Escape kann noch ein Blur folgen. Ohne diese Sperre
+    // würde daraus ein leerer Entwurf und damit eine gelöschte Notiz.
+    if (draft === null) return;
+    const next = draft.trim();
+    setDraft(null);
+    if (next === (assignment.note ?? '')) return;
+    onNote(next || null);
+  };
+
   const body = (
     <>
       <p className="font-bold truncate" style={{ color: color.light.text }}>
@@ -711,6 +742,12 @@ function AssignmentTile({
     </>
   );
 
+  const noteLine = assignment.note && (
+    <p className="mt-1 pt-1 border-t border-[#141414]/10 text-[10px] leading-tight text-[#141414]/75 whitespace-pre-wrap break-words">
+      {assignment.note}
+    </p>
+  );
+
   if (readOnly) {
     return (
       <div
@@ -718,13 +755,16 @@ function AssignmentTile({
         style={{ backgroundColor: color.light.background, borderColor: color.light.border }}
       >
         {body}
+        {noteLine}
       </div>
     );
   }
 
   return (
     <motion.div
-      drag
+      // Wer gerade eine Notiz tippt, darf die Kachel nicht versehentlich in die
+      // Nachbarzelle ziehen — also Ziehen aus, solange das Feld offen ist.
+      drag={draft === null}
       dragSnapToOrigin
       dragMomentum={false}
       dragElastic={0}
@@ -732,7 +772,9 @@ function AssignmentTile({
       onDrag={(_, info) => onDragMove(info.point.x, info.point.y)}
       onDragEnd={(_, info) => onDragEnd(info.point.x, info.point.y)}
       whileDrag={{ scale: 1.04, zIndex: 50, cursor: 'grabbing' }}
-      className="relative rounded-xl px-2 py-1.5 text-xs border cursor-grab touch-none select-none"
+      className={`relative rounded-xl px-2 py-1.5 text-xs border touch-none select-none ${
+        draft === null ? 'cursor-grab' : ''
+      }`}
       style={{
         backgroundColor: color.light.background,
         borderColor: color.light.border,
@@ -744,7 +786,43 @@ function AssignmentTile({
     >
       {body}
 
+      {draft === null ? (
+        noteLine
+      ) : (
+        <textarea
+          autoFocus
+          rows={2}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onPointerDownCapture={(e) => e.stopPropagation()}
+          onBlur={commitNote}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setDraft(null);
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              commitNote();
+            }
+          }}
+          placeholder="z. B. Kunde ab 10 Uhr da"
+          // Die Kachel selbst ist touch-none und select-none, damit das Ziehen sauber
+          // läuft. Das Feld muss beides zurücknehmen, sonst lässt sich der Text
+          // darin weder markieren noch mit dem Finger scrollen.
+          className="w-full mt-1 text-[10px] leading-tight p-1 bg-white/80 border border-[#141414]/15 rounded-lg resize-none select-text touch-auto focus:outline-none focus:border-brand-accent1"
+        />
+      )}
+
       <div className="flex items-center gap-1 mt-1">
+        <button
+          onPointerDownCapture={(e) => e.stopPropagation()}
+          onClick={() => setDraft(assignment.note ?? '')}
+          className={`p-1 rounded-md hover:bg-white/70 cursor-pointer ${
+            assignment.note ? 'text-brand-accent1' : 'text-[#141414]/40 hover:text-brand-accent1'
+          }`}
+          title={assignment.note ? 'Notiz ändern' : 'Notiz hinzufügen'}
+          aria-label={assignment.note ? 'Notiz ändern' : 'Notiz hinzufügen'}
+        >
+          <StickyNote size={12} />
+        </button>
         <button
           onPointerDownCapture={(e) => e.stopPropagation()}
           onClick={onDuplicate}
@@ -905,6 +983,9 @@ function TradeEntryForm({
  * Eingabe eines Einsatzes: Baustelle, Beginn, Ende — mehr braucht die Planung
  * nicht. Die Pause ergibt sich aus den festen Pausenfenstern des Wochentags und
  * wird nur angezeigt, nicht eingegeben.
+ *
+ * Dazu ein freies Notizfeld für das, was der Maler zu diesem Tag wissen muss.
+ * Es steht nur im Raster; in den Wochenbericht wandert es nicht (prefill.ts).
  */
 function AssignmentForm({
   sites,
@@ -927,6 +1008,7 @@ function AssignmentForm({
   const [siteId, setSiteId] = useState(sites.find((s) => !s.is_absence_code)?.id ?? '');
   const [start, setStart] = useState(shift.start);
   const [end, setEnd] = useState(shift.end);
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
   const pause = breakMinutesForDate(start, end, day);
@@ -946,7 +1028,7 @@ function AssignmentForm({
           start_time: start,
           end_time: end,
           break_minutes: pause,
-          note: null,
+          note: note.trim() || null,
         },
       ]);
       await onSaved();
@@ -986,6 +1068,13 @@ function AssignmentForm({
       </div>
 
       <p className="text-[10px] text-gray-500 px-0.5">Pause {pause} Min.</p>
+
+      <input
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Notiz (z. B. Kunde ab 10 Uhr da)"
+        className="w-full text-[11px] p-1.5 bg-white border border-gray-200 rounded-lg"
+      />
 
       <div className="flex gap-1 pt-1">
         <button

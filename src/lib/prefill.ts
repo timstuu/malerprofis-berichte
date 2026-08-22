@@ -73,7 +73,10 @@ export function buildPrefill(
       id: `plan-${assignment.id}`,
       project: site?.address ?? assignment.sites?.address ?? '',
       projectNumber: site?.number ?? assignment.sites?.number ?? '',
-      description: assignment.note ?? '',
+      // Die Notiz am Einsatz bleibt bewusst in der Planung: Sie ist ein Hinweis
+      // für den Tag („Kunde ab 10 Uhr da“), keine Tätigkeitsbeschreibung. Was
+      // gemacht wurde, trägt der Maler selbst ein.
+      description: '',
       hours: calculateHours(start, end, assignment.break_minutes),
       startTime: start,
       endTime: end,

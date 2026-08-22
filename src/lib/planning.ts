@@ -16,6 +16,7 @@ export interface NewAssignment {
   start_time: string;
   end_time: string;
   break_minutes: number;
+  /** Hinweis fürs Raster, z. B. „Kunde ab 10 Uhr da“. Bleibt in der Planung. */
   note?: string | null;
 }
 
@@ -27,6 +28,21 @@ export async function createAssignments(rows: NewAssignment[]): Promise<void> {
   if (rows.length === 0) return;
   const { error } = await supabase.from('assignments').insert(rows);
   if (error) throw new Error(`Einsatz konnte nicht gespeichert werden: ${error.message}`);
+}
+
+/**
+ * Setzt oder löscht den Hinweis an einem Einsatz.
+ *
+ * Der Text ist reine Planungsinformation — er steht im Raster und auf keinem
+ * Wochenbericht (siehe prefill.ts). Wer ihn leert, bekommt `null` gespeichert,
+ * damit die Kachel danach wieder ohne Hinweiszeile auskommt.
+ */
+export async function updateAssignmentNote(id: string, note: string | null): Promise<void> {
+  const { error } = await supabase
+    .from('assignments')
+    .update({ note: note && note.trim() ? note.trim() : null })
+    .eq('id', id);
+  if (error) throw new Error(`Notiz konnte nicht gespeichert werden: ${error.message}`);
 }
 
 export async function deleteAssignment(id: string): Promise<void> {
@@ -81,7 +97,13 @@ export async function fetchImportedAssignmentIds(ids: string[]): Promise<Set<str
   return new Set((data ?? []).map((row) => row.assignment_id as string));
 }
 
-/** Übernimmt alle Einsätze einer Woche in die Folgewoche. */
+/**
+ * Übernimmt alle Einsätze einer Woche in die Folgewoche.
+ *
+ * Die Notizen bleiben bewusst zurück: „Kunde ab 10 Uhr da“ galt für einen
+ * bestimmten Tag. Käme der Satz mit in die neue Woche, stünde dort ein Hinweis,
+ * den niemand geschrieben hat und den die Maler trotzdem befolgen.
+ */
 export async function copyWeek(
   sourceAssignments: AssignmentRow[],
   targetWeekStart: Date,
@@ -102,7 +124,7 @@ export async function copyWeek(
         a.end_time.slice(0, 5),
         addDays(targetWeekStart, offset),
       ),
-      note: a.note,
+      note: null,
     };
   });
   await createAssignments(rows);

@@ -50,6 +50,14 @@ function check(name: string, actual: unknown, expected: unknown) {
   check('nichts hinzugefügt', r.addedCount, 0);
 }
 
+// 2b. Die Planungsnotiz bleibt in der Planung
+{
+  const withNote = assignment('a3', '2026-08-17');
+  withNote.note = 'Kunde ab 10 Uhr da';
+  const r = buildPrefill(MONDAY, emptyWeek(), [withNote], new Set(), [], [], sites, ME);
+  check('Notiz landet nicht im Bericht', r.entries.Montag.entries[0]?.description, '');
+}
+
 // 3. Fremde Einsätze landen nicht im eigenen Bericht
 {
   const r = buildPrefill(MONDAY, emptyWeek(), [assignment('a9', '2026-08-17', OTHER)], new Set(), [], [], sites, ME);
