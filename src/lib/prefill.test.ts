@@ -5,7 +5,7 @@
 import { buildPrefill } from './prefill.ts';
 import { emptyWeek } from './week.ts';
 import type { AssignmentRow } from './data.ts';
-import type { Site, LeaveRequest, Holiday } from './database.types.ts';
+import type { Site, LeaveRequest, Holiday, DefaultHours } from './database.types.ts';
 
 const MONDAY = new Date('2026-08-17T00:00:00'); // KW34
 const ME = 'emp-1';
@@ -15,6 +15,16 @@ const sites: Site[] = [
   { id: 's1', number: '100-7', address: 'Villa Sonnenschein', customer: null, is_absence_code: false, active: true },
   { id: 's-url', number: '060-7', address: 'Urlaub', customer: null, is_absence_code: true, active: true },
   { id: 's-fei', number: '040-7', address: 'Feiertag', customer: null, is_absence_code: true, active: true },
+  { id: 's-bue', number: '001-7', address: 'Büroarbeit', customer: null, is_absence_code: true, active: true },
+];
+
+/** Mo–Do 08:00–17:00 (9,0 Std. − 30 Min = 8,5), Fr 08:00–14:00 (6,0 Std. ohne Pause). */
+const officeWeek: DefaultHours[] = [
+  { employee_id: ME, weekday: 1, start_time: '08:00:00', end_time: '17:00:00' },
+  { employee_id: ME, weekday: 2, start_time: '08:00:00', end_time: '17:00:00' },
+  { employee_id: ME, weekday: 3, start_time: '08:00:00', end_time: '17:00:00' },
+  { employee_id: ME, weekday: 4, start_time: '08:00:00', end_time: '17:00:00' },
+  { employee_id: ME, weekday: 5, start_time: '08:00:00', end_time: '14:00:00' },
 ];
 
 function assignment(id: string, date: string, employee = ME): AssignmentRow {
@@ -136,6 +146,79 @@ function check(name: string, actual: unknown, expected: unknown) {
   const base = emptyWeek();
   buildPrefill(MONDAY, base, [assignment('a5', '2026-08-17')], new Set(), [], [], sites, ME);
   check('Ausgangszustand bleibt unberührt', base.Montag.entries.length, 0);
+}
+
+// --- Standard-Arbeitszeiten der Büro-Konten -------------------------------
+
+// 10. Ohne hinterlegte Zeiten passiert nichts — der Normalfall für jeden Maler.
+{
+  const r = buildPrefill(MONDAY, emptyWeek(), [], new Set(), [], [], sites, ME);
+  check('ohne Standardzeiten bleibt die Woche leer', r.addedCount, 0);
+}
+
+// 11. Hinterlegte Zeiten füllen ihre Wochentage auf 001-7
+{
+  const r = buildPrefill(MONDAY, emptyWeek(), [], new Set(), [], [], sites, ME, officeWeek);
+  check('fünf Bürotage', r.addedCount, 5);
+  check('Bürotag auf 001-7', r.entries.Montag.entries[0]?.projectNumber, '001-7');
+  check('Montag 9,0 Std. minus 30 Min', r.entries.Montag.entries[0]?.hours, 8.5);
+  check('Montag Pause 30 Min', r.entries.Montag.entries[0]?.pause, 30);
+  check('Freitag 6,0 Std. ohne Pause', r.entries.Freitag.entries[0]?.hours, 6);
+  check('Freitag Pause 0 Min', r.entries.Freitag.entries[0]?.pause, 0);
+  check('Samstag ohne Zeile bleibt leer', r.entries.Samstag.entries.length, 0);
+  check('keine Planzeile zu vermerken', r.importedAssignmentIds, []);
+}
+
+// 12. Rangfolge: Einsatz, Feiertag und Urlaub schlagen die Bürozeit
+{
+  const holidays: Holiday[] = [{ date: '2026-08-18', name: 'Testfeiertag' }];
+  const leave: LeaveRequest[] = [{
+    id: 'l9', employee_id: ME, type: 'vacation',
+    start_date: '2026-08-19', end_date: '2026-08-19',
+    status: 'approved', days_count: 1, comment: null, decided_by: null, decided_at: null,
+  }];
+  const r = buildPrefill(
+    MONDAY, emptyWeek(), [assignment('a7', '2026-08-17')], new Set(),
+    leave, holidays, sites, ME, officeWeek,
+  );
+  check('Montag: Einsatz schlägt Bürozeit', r.entries.Montag.entries[0]?.projectNumber, '100-7');
+  check('Montag nur eine Zeile', r.entries.Montag.entries.length, 1);
+  check('Dienstag: Feiertag schlägt Bürozeit', r.entries.Dienstag.entries[0]?.projectNumber, '040-7');
+  check('Mittwoch: Urlaub schlägt Bürozeit', r.entries.Mittwoch.entries[0]?.projectNumber, '060-7');
+  check('Donnerstag: Bürozeit', r.entries.Donnerstag.entries[0]?.projectNumber, '001-7');
+}
+
+// 13. Fehlt 040-7 oder 060-7 als Baustelle, entsteht trotzdem keine Bürostunde
+//     an einem Feiertag oder Urlaubstag.
+{
+  const bare = sites.filter((s) => s.number === '001-7');
+  const holidays: Holiday[] = [{ date: '2026-08-17', name: 'Testfeiertag' }];
+  const leave: LeaveRequest[] = [{
+    id: 'l8', employee_id: ME, type: 'vacation',
+    start_date: '2026-08-18', end_date: '2026-08-18',
+    status: 'approved', days_count: 1, comment: null, decided_by: null, decided_at: null,
+  }];
+  const r = buildPrefill(MONDAY, emptyWeek(), [], new Set(), leave, holidays, bare, ME, officeWeek);
+  check('Feiertag ohne 040-7 bleibt leer', r.entries.Montag.entries.length, 0);
+  check('Urlaubstag ohne 060-7 bleibt leer', r.entries.Dienstag.entries.length, 0);
+  check('übrige Bürotage entstehen trotzdem', r.addedCount, 3);
+}
+
+// 14. Eigene Eingabe wird nicht überschrieben
+{
+  const base = emptyWeek();
+  base.Montag.entries.push({ id: 'eigen', project: 'Kundentermin', projectNumber: '100-7', description: 'vor Ort', hours: 3 });
+  const r = buildPrefill(MONDAY, base, [], new Set(), [], [], sites, ME, officeWeek);
+  check('eigene Zeile bleibt allein stehen', r.entries.Montag.entries.length, 1);
+  check('nur die vier übrigen Bürotage', r.addedCount, 4);
+}
+
+// 15. Fehlt 001-7 in den Stammdaten, passiert nichts — statt einer Zeile ohne
+//     Baustellennummer, die in der Auswertung eine Lücke hinterlässt.
+{
+  const withoutOffice = sites.filter((s) => s.number !== '001-7');
+  const r = buildPrefill(MONDAY, emptyWeek(), [], new Set(), [], [], withoutOffice, ME, officeWeek);
+  check('ohne 001-7 keine Bürozeilen', r.addedCount, 0);
 }
 
 console.log(failed === 0 ? '\nAlle Prüfungen bestanden.' : `\n${failed} Prüfung(en) fehlgeschlagen.`);

@@ -7,7 +7,7 @@
  * je nach Entstehungsweg unterschiedlich viele Stunden — und das fällt
  * frühestens bei der Abrechnung auf.
  */
-import { breakMinutesFor, calculateHours, defaultShiftFor, TARGET_HOURS } from './hours.ts';
+import { breakMinutesFor, calculateHours, defaultShiftFor, TARGET_HOURS, statutoryBreakMinutes} from './hours.ts';
 
 let failed = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -72,6 +72,31 @@ check('über Mitternacht: Fenster liegen am Vortag', breakMinutesFor('22:00', '0
 check('leere Zeiten', breakMinutesFor('', '', 'Montag'), 0);
 check('Samstag wie Mo–Do', breakMinutesFor('07:00', '16:30', 'Samstag'), 60);
 check('kurzer Samstag', breakMinutesFor('07:00', '12:00', 'Samstag'), 30);
+
+// --- Gesetzliche Pause der Büro-Standardzeiten (§ 4 ArbZG) -----------------
+// Eigene Regel, bemessen an der Anwesenheit. Gilt nur für Büro-Konten und darf
+// die festen Fenster der Maler nicht berühren.
+
+check('unter 6 Std. ohne Pause', statutoryBreakMinutes('08:00', '13:00'), 0);
+check('genau 6,0 Std. noch ohne Pause', statutoryBreakMinutes('08:00', '14:00'), 0);
+check('knapp über 6 Std. mit 30 Min', statutoryBreakMinutes('08:00', '14:01'), 30);
+check('8 Std. mit 30 Min', statutoryBreakMinutes('08:00', '16:00'), 30);
+check('genau 9,0 Std. noch mit 30 Min', statutoryBreakMinutes('08:00', '17:00'), 30);
+check('knapp über 9 Std. mit 45 Min', statutoryBreakMinutes('08:00', '17:01'), 45);
+check('10 Std. mit 45 Min', statutoryBreakMinutes('07:00', '17:00'), 45);
+check('leere Zeiten', statutoryBreakMinutes('', ''), 0);
+check('über Mitternacht zählt die Dauer (8 Std.)', statutoryBreakMinutes('22:00', '06:00'), 30);
+
+// Die beiden Regeln müssen auseinanderliegen — sonst ist eine von beiden
+// überflüssig und irgendwann verwechselt sie jemand.
+check(
+  'Regelschicht: Fenster 60, gesetzlich 45',
+  [breakMinutesFor('07:00', '16:30', 'Montag'), statutoryBreakMinutes('07:00', '16:30')],
+  [60, 45],
+);
+
+// Bürotag 08:00–17:00 = 9,0 Std. Anwesenheit − 30 Min = 8,5 Std. netto.
+check('Bürotag netto', calculateHours('08:00', '17:00', statutoryBreakMinutes('08:00', '17:00')), 8.5);
 
 console.log(failed === 0 ? '\nAlle Prüfungen bestanden.' : `\n${failed} Prüfung(en) fehlgeschlagen.`);
 if (failed > 0) process.exit(1);

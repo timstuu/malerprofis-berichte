@@ -28,6 +28,11 @@ Daten liegt vollständig in den Row-Level-Security-Regeln der Datenbank.
      gespeicherte Wochenberichte bleiben unangetastet
    - `0006_trade_rows.sql` — Zeilen für Fremdgewerke (Hebebühne, Tischler) in
      der Wochenplanung. Fehlt sie, zeigt die App einfach keine Gewerke an
+   - `0007_admin_default_hours.sql` — Standard-Arbeitszeiten der Büro-Konten,
+     die deren Wochenbericht auf `001-7 Büroarbeit` vorbefüllen. Löscht dabei
+     die ab dieser Woche auf Büro-Konten gebuchten Einsätze und meldet vorher
+     unter „Messages", wie viele es sind. Fehlt sie, gibt es eben keine
+     Standardzeiten; die App geht davon nicht kaputt
 3. Unter **Project Settings → API** die Projekt-URL und den `anon`-Key notieren.
 
 ### 2. Zugangsdaten hinterlegen

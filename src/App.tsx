@@ -57,6 +57,7 @@ import {
   emptyWeek,
   fetchAssignments,
   fetchEmployees,
+  fetchDefaultHours,
   fetchHolidays,
   fetchLeaveRequests,
   fetchMyReportEntries,
@@ -71,6 +72,7 @@ import {
   type WeeklyEntry,
 } from './lib/data.ts';
 import { fetchHandledAssignmentIds, markAssignments } from './lib/planning.ts';
+import DefaultHours from './features/admin/DefaultHours.tsx';
 import { buildPrefill } from './lib/prefill.ts';
 import type { Employee, Holiday, LeaveRequest, Site } from './lib/database.types.ts';
 
@@ -351,10 +353,13 @@ export default function App() {
         const from = weekKey(selectedWeek);
         const to = format(addDays(selectedWeek, 6), 'yyyy-MM-dd');
 
-        const [assignments, handled, holidays] = await Promise.all([
+        const [assignments, handled, holidays, defaultHours] = await Promise.all([
           fetchAssignments(from, to),
           fetchHandledAssignmentIds(currentUser.id),
           fetchHolidays(from, to),
+          // Nur Büro-Konten haben Standardzeiten. Für jeden Maler wäre das eine
+          // Abfrage, die garantiert nichts zurückgibt.
+          currentUser.role === 'admin' ? fetchDefaultHours(currentUser.id) : Promise.resolve([]),
         ]);
 
         const result = buildPrefill(
@@ -366,6 +371,7 @@ export default function App() {
           holidays,
           sites,
           currentUser.id,
+          defaultHours,
         );
 
         if (result.addedCount === 0) return base;
@@ -1909,7 +1915,14 @@ export default function App() {
                 className="space-y-8"
               >
                 <h2 className="text-2xl font-bold">Einstellungen</h2>
-                
+
+                {isAdmin && currentUser && (
+                  <section className="space-y-4">
+                    <h3 className="text-lg font-bold">Standard-Arbeitszeiten</h3>
+                    <DefaultHours employeeId={currentUser.id} />
+                  </section>
+                )}
+
                 <section className="space-y-4">
                   <h3 className="text-lg font-bold">Berichtshistorie</h3>
                   <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">

@@ -1,6 +1,6 @@
-import { WEEKDAYS, calculateHours, targetHoursForDate } from './hours.ts';
+import { WEEKDAYS, calculateHours, statutoryBreakMinutes, targetHoursForDate } from './hours.ts';
 import { dateOfWeekday, type WeeklyEntries, type WeeklyEntry } from './week.ts';
-import type { Holiday, LeaveRequest, Site } from './database.types.ts';
+import type { DefaultHours, Holiday, LeaveRequest, Site } from './database.types.ts';
 import type { AssignmentRow } from './data.ts';
 
 /**
@@ -30,10 +30,14 @@ export interface PrefillResult {
  * - **Einsätze** merken sich pro Zeile, ob sie übernommen oder gelöscht wurden
  *   (`assignment_imports`). Eine einmal verworfene Planzeile kommt nie wieder,
  *   auch wenn der Maler die App zehnmal am Tag öffnet.
- * - **Urlaub und Feiertage** haben keine Planzeile, an der ein solcher Vermerk
- *   hängen könnte. Sie werden deshalb nur an Tagen ergänzt, die noch gar keine
- *   Zeile haben. Wer an einem Urlaubstag doch gearbeitet hat und das einträgt,
- *   bekommt keine Urlaubszeile mehr dazu.
+ * - **Urlaub, Feiertage und Büro-Standardzeiten** haben keine Planzeile, an der
+ *   ein solcher Vermerk hängen könnte. Sie werden deshalb nur an Tagen ergänzt,
+ *   die noch gar keine Zeile haben. Wer an einem Urlaubstag doch gearbeitet hat
+ *   und das einträgt, bekommt keine Urlaubszeile mehr dazu — und eine gelöschte
+ *   Bürozeile kommt beim nächsten Öffnen der Woche wieder.
+ *
+ * Die Rangfolge ergibt sich aus der Reihenfolge der Abschnitte: Ein geplanter
+ * Einsatz schlägt Feiertag und Urlaub, und beide schlagen die Bürozeit.
  */
 export function buildPrefill(
   weekStart: Date,
@@ -44,6 +48,12 @@ export function buildPrefill(
   holidays: Holiday[],
   sites: Site[],
   employeeId: string,
+  /**
+   * Standard-Arbeitszeiten dieses Mitarbeiters, sofern hinterlegt. Leer für
+   * jeden Maler — dessen Stunden kommen aus der Planung. Vorbelegt, damit die
+   * Regel für alle bestehenden Aufrufe unverändert gilt.
+   */
+  defaultHours: DefaultHours[] = [],
 ): PrefillResult {
   // Flache Kopie je Tag, damit der aufrufende State unverändert bleibt.
   const entries: WeeklyEntries = Object.fromEntries(
@@ -110,21 +120,76 @@ export function buildPrefill(
       continue;
     }
 
-    const onLeave = leaves.some(
-      (leave) =>
-        leave.employee_id === employeeId &&
-        leave.status === 'approved' &&
-        leave.type === 'vacation' &&
-        dateStr >= leave.start_date &&
-        dateStr <= leave.end_date,
-    );
-    if (onLeave && vacationSite) {
+    if (onApprovedVacation(leaves, employeeId, dateStr) && vacationSite) {
       entries[day].entries.push(absenceEntry(`urlaub-${dateStr}`, vacationSite, 'Urlaub', targetHours));
       addedCount++;
     }
   }
 
+  // --- 3. Standard-Arbeitszeiten der Büro-Konten ---------------------------
+  //
+  // Büro-Konten stehen nicht in der Wochenplanung; ihre Stunden entstehen aus
+  // dieser Vorgabe statt aus Einsätzen. Ein Wochentag ohne hinterlegte Zeile
+  // bleibt leer — die Zeile ist die Aussage „an dem Tag wird gearbeitet".
+  //
+  // Die Pause folgt hier § 4 ArbZG und nicht den festen Pausenfenstern der
+  // Maler: Im Büro gibt es keine Baustelle, an der um zehn die Kaffeekanne
+  // steht.
+  const officeSite = siteByNumber.get(OFFICE_SITE_NUMBER);
+
+  if (defaultHours.length > 0 && officeSite) {
+    const byWeekday = new Map(defaultHours.map((h) => [h.weekday, h]));
+
+    for (let i = 0; i < WEEKDAYS.length; i++) {
+      const day = WEEKDAYS[i];
+      if (entries[day].entries.length > 0) continue; // Einsatz, Urlaub, Feiertag
+
+      const dateStr = dateOfWeekday(weekStart, i);
+      // Beide Prüfungen noch einmal ausdrücklich: Abschnitt 2 legt seine Zeilen
+      // nur an, wenn 040-7 und 060-7 als Baustelle existieren. Fehlt eine davon,
+      // ist der Tag weiterhin leer — und ohne diese Prüfung stünden dann
+      // Bürostunden an einem Feiertag.
+      if (holidayByDate.has(dateStr)) continue;
+      if (onApprovedVacation(leaves, employeeId, dateStr)) continue;
+
+      // WEEKDAYS beginnt bei Montag, der ISO-Wochentag zählt ab 1.
+      const spec = byWeekday.get(i + 1);
+      if (!spec) continue;
+
+      const start = spec.start_time.slice(0, 5);
+      const end = spec.end_time.slice(0, 5);
+      const breakMinutes = statutoryBreakMinutes(start, end);
+
+      entries[day].entries.push({
+        id: `buero-${dateStr}`,
+        project: officeSite.address,
+        projectNumber: officeSite.number,
+        description: '',
+        hours: calculateHours(start, end, breakMinutes),
+        startTime: start,
+        endTime: end,
+        pause: breakMinutes,
+        sourceAssignmentId: null,
+      });
+      addedCount++;
+    }
+  }
+
   return { entries, importedAssignmentIds, addedCount };
+}
+
+/** Baustellennummer, auf die Bürostunden gebucht werden. */
+const OFFICE_SITE_NUMBER = '001-7';
+
+function onApprovedVacation(leaves: LeaveRequest[], employeeId: string, date: string): boolean {
+  return leaves.some(
+    (leave) =>
+      leave.employee_id === employeeId &&
+      leave.status === 'approved' &&
+      leave.type === 'vacation' &&
+      date >= leave.start_date &&
+      date <= leave.end_date,
+  );
 }
 
 function absenceEntry(id: string, site: Site, description: string, hours: number): WeeklyEntry {

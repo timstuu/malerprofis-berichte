@@ -84,7 +84,10 @@ export default function TvBoard() {
       // Das Anzeigekonto selbst ist keine Person und gehört nicht auf den Schirm.
       // Dieselbe Reihenfolge wie im Büro — sonst sucht man an der Wand an einer
       // anderen Stelle als auf dem Planungsschirm.
-      setEmployees(sortEmployees(emp.filter((e) => e.active && e.role !== 'tv')));
+      // Nur Maler, wie in der Wochenplanung: Ein Büro-Konto kann konstruktions-
+      // bedingt keinen Einsatz haben und stünde als dauerhaft leere Zeile an der
+      // Wand.
+      setEmployees(sortEmployees(emp.filter((e) => e.active && e.role === 'worker')));
       setAssignments(assign);
       setLeaveRequests(leaves);
       setHolidays(holidayList);

@@ -111,6 +111,38 @@ export function breakMinutesForDate(startTime: string, endTime: string, date: Da
 }
 
 /**
+ * Gesetzliche Mindestpause nach § 4 ArbZG, bemessen an der Anwesenheit.
+ *
+ * Gilt ausschließlich für die Standard-Arbeitszeiten der Büro-Konten. Die Maler
+ * rechnen weiter nach den festen Pausenfenstern oben — die beiden Regeln sind
+ * bewusst getrennt und dürfen nicht vermischt werden: Für einen geplanten
+ * Einsatz zählt, ob er ein Fenster überdeckt, für eine Bürozeit nur, wie lange
+ * sie dauert.
+ *
+ * Bemessen wird an der Anwesenheit (Ende minus Beginn), nicht an der
+ * Arbeitszeit nach Abzug. Das Gesetz meint zwar die Arbeitszeit, aber diese
+ * Rechnung beißt sich in den Schwanz: 9,5 Std. minus 45 sind 8,75, und 8,75
+ * verlangt keine 45 mehr. Die Anwesenheit ist eindeutig und nachvollziehbar.
+ *
+ * An den Rändern gilt der Gesetzestext, nicht die Faustformel: Pause erst
+ * *über* sechs bzw. *über* neun Stunden. Bei genau 6,0 oder genau 9,0 Std. wird
+ * also weniger abgezogen — zugunsten des Mitarbeiters.
+ *
+ * @param startTime "HH:MM"
+ * @param endTime   "HH:MM"
+ */
+export function statutoryBreakMinutes(startTime: string, endTime: string): number {
+  if (!startTime || !endTime) return 0;
+
+  let gross = minutesOf(endTime) - minutesOf(startTime);
+  if (gross < 0) gross += 24 * 60; // über Mitternacht gearbeitet
+
+  if (gross <= 6 * 60) return 0;
+  if (gross <= 9 * 60) return 30;
+  return 45;
+}
+
+/**
  * Regelarbeitszeit als Vorbelegung im Einsatzformular. Die Zeiten sind so
  * gewählt, dass nach Abzug der Pausen genau die Soll-Stunden herauskommen.
  */

@@ -117,6 +117,22 @@ export interface TradeEntryRow extends TradeEntry {
   sites: { number: string; address: string } | null;
 }
 
+/**
+ * Die Standard-Arbeitszeit eines Büro-Kontos an einem Wochentag.
+ *
+ * Nur für Rolle 'admin' gedacht: Büro-Konten werden nicht eingeplant, ihre
+ * Stunden entstehen deshalb nicht aus Einsätzen, sondern aus dieser Vorgabe.
+ * Ein Wochentag ohne Zeile bedeutet „an dem Tag wird nicht gearbeitet" — die
+ * Zeile ist die Aussage, nicht ihr Inhalt.
+ */
+export interface DefaultHours {
+  employee_id: string;
+  /** ISO-Wochentag: 1 = Montag … 7 = Sonntag. */
+  weekday: number;
+  start_time: string; // HH:MM:SS
+  end_time: string;
+}
+
 /** Ein freier Hinweis für einen Kalendertag, gültig für den ganzen Betrieb. */
 export interface WeekNote {
   date: string; // yyyy-MM-dd

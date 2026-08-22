@@ -136,8 +136,11 @@ export default function WeekGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekStart]);
 
+  // Nur Maler. Büro-Konten werden nicht eingeplant — sie hinterlegen ihre
+  // Standard-Arbeitszeiten in den Einstellungen und tauchen deshalb weder hier
+  // noch am Fernseher als Zeile auf.
   // Dieselbe Reihenfolge wie in der Benutzerverwaltung und am Fernseher.
-  const workers = sortEmployees(employees.filter((e) => e.active && e.role !== 'tv'));
+  const workers = sortEmployees(employees.filter((e) => e.active && e.role === 'worker'));
 
   const noteOn = (date: string) => notes.find((n) => n.date === date)?.text ?? '';
   const hasNotes = notes.some((n) => n.text.trim().length > 0);
@@ -253,10 +256,17 @@ export default function WeekGrid({
   const duplicatePreviousWeek = async () => {
     const previousStart = subWeeks(weekStart, 1);
     try {
-      const previous = await fetchAssignments(
-        format(previousStart, 'yyyy-MM-dd'),
-        format(addDays(previousStart, DAY_COUNT - 1), 'yyyy-MM-dd'),
-      );
+      // Nur die Zeilen, die auch zu sehen sind: In alten Wochen können noch
+      // Einsätze von Büro-Konten liegen. Ohne diesen Filter holte „Vorwoche
+      // übernehmen“ genau die Daten zurück, die Migration 0007 entfernt hat —
+      // unsichtbar im Raster und trotzdem im Wochenbericht wirksam.
+      const visible = new Set(workers.map((w) => w.id));
+      const previous = (
+        await fetchAssignments(
+          format(previousStart, 'yyyy-MM-dd'),
+          format(addDays(previousStart, DAY_COUNT - 1), 'yyyy-MM-dd'),
+        )
+      ).filter((a) => visible.has(a.employee_id));
       if (previous.length === 0) {
         setError('In der Vorwoche ist nichts geplant.');
         return;
@@ -981,8 +991,8 @@ function TradeEntryForm({
 
 /**
  * Eingabe eines Einsatzes: Baustelle, Beginn, Ende — mehr braucht die Planung
- * nicht. Die Pause ergibt sich aus den festen Pausenfenstern des Wochentags und
- * wird nur angezeigt, nicht eingegeben.
+ * nicht. Die Pause ergibt sich aus den festen Pausenfenstern des Wochentags;
+ * sie wird berechnet und gespeichert, aber bewusst nicht angezeigt.
  *
  * Dazu ein freies Notizfeld für das, was der Maler zu diesem Tag wissen muss.
  * Es steht nur im Raster; in den Wochenbericht wandert es nicht (prefill.ts).
@@ -1066,8 +1076,6 @@ function AssignmentForm({
           className="w-1/2 text-[11px] p-1.5 bg-white border border-gray-200 rounded-lg"
         />
       </div>
-
-      <p className="text-[10px] text-gray-500 px-0.5">Pause {pause} Min.</p>
 
       <input
         value={note}

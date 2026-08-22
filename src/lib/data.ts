@@ -3,6 +3,7 @@ import { WEEKDAYS } from './hours.ts';
 import { dateOfWeekday, emptyWeek, weekKey, type WeeklyEntries } from './week.ts';
 import type {
   Assignment,
+  DefaultHours,
   Employee,
   Holiday,
   LeaveRequest,
@@ -378,6 +379,71 @@ function shiftDate(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00`);
   d.setDate(d.getDate() + days);
   return isoDate(d);
+}
+
+// ---------------------------------------------------------------------------
+// Standard-Arbeitszeiten der Büro-Konten
+// ---------------------------------------------------------------------------
+
+/**
+ * Wie bei Hinweisen und Gewerken: Fehlt die Tabelle noch, gibt es eben keine
+ * Standardzeiten. Diese Abfrage läuft bei jedem Öffnen eines Wochenberichts —
+ * eine rote Fehlermeldung in den Minuten zwischen Deployment und Migration
+ * wäre das Letzte, was jemand dort sehen will.
+ */
+const MISSING_DEFAULT_HOURS =
+  'Die Standard-Arbeitszeiten sind in der Datenbank noch nicht angelegt. Bitte einmalig ' +
+  'supabase/migrations/0007_admin_default_hours.sql im Supabase-SQL-Editor ausführen.';
+
+/** Die hinterlegten Wochentage eines Büro-Kontos, aufsteigend ab Montag. */
+export async function fetchDefaultHours(employeeId: string): Promise<DefaultHours[]> {
+  const { data, error } = await supabase
+    .from('employee_default_hours')
+    .select('*')
+    .eq('employee_id', employeeId)
+    .order('weekday');
+
+  if (error) {
+    if (isMissingTable(error, 'employee_default_hours')) return [];
+    throw new Error(`Standard-Arbeitszeiten konnten nicht geladen werden: ${error.message}`);
+  }
+  return (data ?? []) as DefaultHours[];
+}
+
+/**
+ * Schreibt die Wochentage eines Büro-Kontos.
+ *
+ * Zwei Schritte statt eines Austauschs in einem Rutsch: Erst werden die
+ * angegebenen Tage geschrieben, dann die weggelassenen entfernt. Löschte man
+ * zuerst alles und das Einfügen schlüge fehl, stünde der Mitarbeiter ohne
+ * Zeiten da — und beide Schritte für sich sind wiederholbar.
+ */
+export async function saveDefaultHours(
+  employeeId: string,
+  rows: { weekday: number; start_time: string; end_time: string }[],
+): Promise<void> {
+  if (rows.length > 0) {
+    const { error } = await supabase.from('employee_default_hours').upsert(
+      rows.map((r) => ({ employee_id: employeeId, ...r })),
+      { onConflict: 'employee_id,weekday' },
+    );
+    if (error) {
+      throw new Error(
+        isMissingTable(error, 'employee_default_hours')
+          ? MISSING_DEFAULT_HOURS
+          : `Standard-Arbeitszeiten konnten nicht gespeichert werden: ${error.message}`,
+      );
+    }
+  }
+
+  const kept = rows.map((r) => r.weekday);
+  let query = supabase.from('employee_default_hours').delete().eq('employee_id', employeeId);
+  if (kept.length > 0) query = query.not('weekday', 'in', `(${kept.join(',')})`);
+
+  const { error } = await query;
+  if (error) {
+    throw new Error(`Standard-Arbeitszeiten konnten nicht bereinigt werden: ${error.message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
