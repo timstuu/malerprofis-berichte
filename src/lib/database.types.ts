@@ -63,6 +63,9 @@ export interface ReportEntry {
   report_id: string;
   date: string;
   site_id: string | null;
+  /** Baustelle als Klartext — auch wenn sie nicht im Stammdatenkatalog steht. */
+  site_number: string | null;
+  site_address: string | null;
   description: string | null;
   start_time: string | null;
   end_time: string | null;

@@ -39,6 +39,8 @@ export interface ReportEntryRow {
   report_id: string;
   date: string;
   site_id: string | null;
+  site_number: string | null;
+  site_address: string | null;
   description: string | null;
   start_time: string | null;
   end_time: string | null;
@@ -516,8 +518,8 @@ export async function loadWeeklyReport(
     if (index < 0) continue;
     entries[WEEKDAYS[index]].entries.push({
       id: row.id,
-      project: row.sites?.address ?? '',
-      projectNumber: row.sites?.number ?? '',
+      project: row.site_address ?? row.sites?.address ?? '',
+      projectNumber: row.site_number ?? row.sites?.number ?? '',
       description: row.description ?? '',
       hours: Number(row.hours),
       startTime: row.start_time?.slice(0, 5),
@@ -578,6 +580,10 @@ export async function saveWeeklyReport(
       report_id: report.id,
       date: dateOfWeekday(weekStart, index),
       site_id: byNumber.get(entry.projectNumber) ?? byAddress.get(entry.project.toLowerCase()) ?? null,
+      // Der Verweis auf den Stamm kann leer bleiben, der Klartext nie: Nur so
+      // steht die Baustelle auch dann im Büro-PDF, wenn sie frei getippt wurde.
+      site_number: entry.projectNumber || null,
+      site_address: entry.project || null,
       description: entry.description || null,
       start_time: entry.startTime || null,
       end_time: entry.endTime || null,
@@ -595,4 +601,64 @@ export async function saveWeeklyReport(
   }
 
   return report.id;
+}
+
+// ---------------------------------------------------------------------------
+// Wochenberichte im Büro
+// ---------------------------------------------------------------------------
+
+/** Ein abgegebener Wochenbericht, wie ihn die Verwaltung auflistet. */
+export interface SubmittedReport {
+  id: string;
+  employee_id: string;
+  week_start: string;
+  signature: string | null;
+  submitted_at: string | null;
+  employees: { first_name: string; last_name: string } | null;
+  report_entries: ReportEntryRow[];
+}
+
+/**
+ * Alle abgegebenen Wochenberichte einer Woche — die Liste, die das Büro sieht.
+ *
+ * Entwürfe bleiben bewusst außen vor: Das Büro soll nur bewerten, was der
+ * Maler auch unterschrieben hat. Lesen darf das nur ein Admin, dafür sorgt die
+ * RLS-Regel auf weekly_reports.
+ */
+export async function fetchSubmittedReports(weekStart: Date): Promise<SubmittedReport[]> {
+  const result = await supabase
+    .from('weekly_reports')
+    .select(
+      'id, employee_id, week_start, signature, submitted_at, employees(first_name, last_name), report_entries(*, sites(number, address))',
+    )
+    .eq('week_start', weekKey(weekStart))
+    .eq('status', 'signed');
+
+  // supabase-js hält jede eingebettete Tabelle für eine Liste. employee_id ist
+  // aber ein einfacher Verweis, PostgREST liefert dort ein Objekt.
+  return unwrap<SubmittedReport[]>(
+    result as unknown as { data: SubmittedReport[] | null; error: { message: string } | null },
+    'Abgegebene Wochenberichte',
+  );
+}
+
+/**
+ * Gibt einen abgegebenen Bericht zur Korrektur frei.
+ *
+ * Die Unterschrift wird dabei verworfen — sie gehört zu dem Stand, der gerade
+ * aufgehoben wird, und dürfte nicht unter einem nachträglich geänderten
+ * Bericht weiterstehen. Der Maler muss also neu unterschreiben und neu abgeben.
+ */
+export async function reopenWeeklyReport(reportId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from('weekly_reports')
+    .update({ status: 'draft', signature: null, submitted_at: null, updated_at: new Date().toISOString() })
+    .eq('id', reportId)
+    .select('id');
+  if (error) throw new Error(`Bericht konnte nicht entsperrt werden: ${error.message}`);
+  // Ohne Leserecht auf die Zeile meldet Supabase keinen Fehler, sondern trifft
+  // einfach nichts. Das darf nicht als Erfolg durchgehen.
+  if (!data || data.length === 0) {
+    throw new Error('Bericht konnte nicht entsperrt werden: keine Berechtigung oder Bericht nicht gefunden.');
+  }
 }
