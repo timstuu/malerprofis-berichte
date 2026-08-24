@@ -19,9 +19,15 @@ import type { Employee, TradeEntryRow, TradeRow } from '../../lib/database.types
  *    nicht erzwingen — weder die Vollbild-Schnittstelle noch die Drehsperre
  *    sind dort ansteuerbar. Steckt das Gerät im Hochformat fest, weil die
  *    Displaysperre an ist, dreht sich stattdessen der Inhalt um 90°: Das Handy
- *    wird nach rechts gekippt. Dreht das Gerät von selbst ins Querformat,
+ *    wird nach links gekippt. Dreht das Gerät von selbst ins Querformat,
  *    bleibt alles ungedreht — dann scrollt es ganz normal.
  */
+/** Breite der Namensspalte. */
+const NAME_COLUMN = '4.5rem';
+
+/** So viele Tage füllen am Handy die Breite — Montag bis Freitag. */
+const DAYS_ACROSS = 5;
+
 export default function FullscreenPlan({
   days,
   dayCount,
@@ -81,9 +87,35 @@ export default function FullscreenPlan({
     };
   }, [onClose]);
 
-  // Die Tage teilen sich den Platz — minmax(0,1fr) statt einer Mindestbreite,
-  // sonst käme das waagerechte Scrollen zurück.
-  const template = `4.5rem repeat(${dayCount}, minmax(0, 1fr))`;
+  // Wie breit ist die Ansicht? Im gedrehten Zustand ist das die Höhe des
+  // Geräts, sonst dessen Breite.
+  const [viewWidth, setViewWidth] = useState(() =>
+    window.matchMedia('(orientation: portrait)').matches ? window.innerHeight : window.innerWidth,
+  );
+
+  useEffect(() => {
+    const update = () =>
+      setViewWidth(
+        window.matchMedia('(orientation: portrait)').matches
+          ? window.innerHeight
+          : window.innerWidth,
+      );
+    window.addEventListener('resize', update);
+    window.addEventListener('orientationchange', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('orientationchange', update);
+    };
+  }, []);
+
+  // Auf dem Handy füllen Montag bis Freitag die Breite; der Samstag wird
+  // herangescrollt. Sechs Tage nebeneinander ließen pro Tag nur rund 95 Pixel —
+  // zu schmal, um eine Adresse zu erkennen. Auf großen Bildschirmen passen alle
+  // Tage ohnehin nebeneinander.
+  const narrow = viewWidth < 1024;
+  const template = narrow
+    ? `${NAME_COLUMN} repeat(${dayCount}, calc((100% - ${NAME_COLUMN}) / ${DAYS_ACROSS}))`
+    : `${NAME_COLUMN} repeat(${dayCount}, minmax(0, 1fr))`;
 
   return (
     <div className="fixed inset-0 z-[60] bg-white overflow-hidden">
@@ -93,7 +125,7 @@ export default function FullscreenPlan({
         .fsplan { width: 100vw; height: 100vh; }
         .fsplan-rot {
           width: 100vh; height: 100vw;
-          transform: rotate(-90deg) translateX(-100%);
+          transform: rotate(90deg) translateY(-100%);
           transform-origin: top left;
         }
         @supports (height: 100dvh) {
@@ -130,7 +162,7 @@ export default function FullscreenPlan({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div className={`flex-1 overflow-y-auto ${narrow ? 'overflow-x-auto' : 'overflow-x-hidden'}`}>
           <div
             className="grid bg-gray-50/80 sticky top-0 z-10"
             style={{ gridTemplateColumns: template }}
