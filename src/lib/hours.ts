@@ -143,6 +143,28 @@ export function statutoryBreakMinutes(startTime: string, endTime: string): numbe
 }
 
 /**
+ * Wählt die Pausenregel, die für einen Mitarbeiter gilt.
+ *
+ * Hier wird nur entschieden, welche der beiden Regeln greift — gemischt wird
+ * nie. Der Wochenbericht hat zuvor für jeden nach den festen Pausenfenstern
+ * gerechnet, auch für die Büro-Konten. Ein Bürotag von 07:00 bis 16:30 überdeckt
+ * zwar beide Fenster, aber im Büro finden diese Pausen nicht statt: Fällig sind
+ * die gesetzlichen 45 Minuten, nicht 60.
+ *
+ * @param office true für Büro-Konten (§ 4 ArbZG), false für Maler (feste Fenster)
+ */
+export function breakMinutesForRole(
+  startTime: string,
+  endTime: string,
+  weekday: Weekday,
+  office: boolean,
+): number {
+  return office
+    ? statutoryBreakMinutes(startTime, endTime)
+    : breakMinutesFor(startTime, endTime, weekday);
+}
+
+/**
  * Regelarbeitszeit als Vorbelegung im Einsatzformular. Die Zeiten sind so
  * gewählt, dass nach Abzug der Pausen genau die Soll-Stunden herauskommen.
  */

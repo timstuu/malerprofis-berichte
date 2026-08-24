@@ -47,7 +47,7 @@ import WeekGrid from './features/planning/WeekGrid.tsx';
 import LeaveView from './features/leave/LeaveView.tsx';
 import PushToggle from './features/leave/PushToggle.tsx';
 import { useAuth } from './lib/auth.tsx';
-import { breakMinutesFor, calculateHours, WEEKDAYS } from './lib/hours.ts';
+import { breakMinutesForRole, calculateHours, WEEKDAYS } from './lib/hours.ts';
 import {
   createLeaveRequest,
   decideLeaveRequest,
@@ -104,21 +104,24 @@ const DRAFT_KEY = 'weekDraft';
  * — Id und Herkunft (`sourceAssignmentId`) bleiben erhalten, damit eine aus der
  * Planung übernommene Zeile ihre Verbindung behält.
  *
- * Die Pause folgt wie im Anlegen-Feld den festen Pausenfenstern des Wochentags;
- * Stunden und Pause werden aus den Zeiten gerechnet, nicht eingegeben.
- * Abwesenheitszeilen (Urlaub, Feiertag, Büro) landen gar nicht hier — der
- * Bericht öffnet den Stift nur für echte Arbeitszeilen.
+ * Die Pause folgt wie im Anlegen-Feld der Regel des Kontos; Stunden und Pause
+ * werden aus den Zeiten gerechnet, nicht eingegeben. Abwesenheitszeilen
+ * (Urlaub, Feiertag, Büro) landen gar nicht hier — der Bericht öffnet den Stift
+ * nur für echte Arbeitszeilen.
  */
 function ReportEntryEditor({
   entry,
   day,
   sites,
+  office,
   onCancel,
   onSave,
 }: {
   entry: WeeklyEntry;
   day: string;
   sites: Site[];
+  /** Büro-Konto: gesetzliche Pause statt fester Fenster, Beschreibung freiwillig. */
+  office: boolean;
   onCancel: () => void;
   onSave: (updated: WeeklyEntry) => void;
 }) {
@@ -128,12 +131,18 @@ function ReportEntryEditor({
   const [start, setStart] = useState(entry.startTime ?? '');
   const [end, setEnd] = useState(entry.endTime ?? '');
 
-  const pause = start && end ? breakMinutesFor(start, end, day as (typeof WEEKDAYS)[number]) : 0;
+  const pause = start && end
+    ? breakMinutesForRole(start, end, day as (typeof WEEKDAYS)[number], office)
+    : 0;
   const hours = start && end ? calculateHours(start, end, pause) : entry.hours;
 
   const save = () => {
     if (!project.trim()) {
       alert('Bitte Baustelle / Adresse eingeben.');
+      return;
+    }
+    if (!office && !description.trim()) {
+      alert('Bitte Tätigkeitsbeschreibung eingeben.');
       return;
     }
     if (!start || !end) {
@@ -189,7 +198,7 @@ function ReportEntryEditor({
       <textarea
         value={description}
         onChange={(e) => setDescription(e.target.value)}
-        placeholder="Tätigkeitsbeschreibung"
+        placeholder={office ? 'Tätigkeitsbeschreibung' : 'Tätigkeitsbeschreibung *'}
         className="w-full p-2.5 bg-gray-100 rounded-xl border-none h-16 text-sm"
       />
 
@@ -583,6 +592,26 @@ export default function App() {
       cancelled = true;
     };
   }, [currentUser, selectedWeek, runPrefill]);
+
+  /**
+   * Wochentage, an denen eine Arbeitszeile ohne Tätigkeitsbeschreibung steht.
+   *
+   * Geprüft wird beim Abgeben und nicht nur am Eingabefeld: Zeilen aus der
+   * Wochenplanung kommen absichtlich ohne Beschreibung in den Bericht (die
+   * Notiz des Büros ist keine), und genau die würden sonst leer beim Büro
+   * landen. Abwesenheitszeilen — Urlaub, Feiertag, Lager — beschreiben sich
+   * selbst und bleiben außen vor, ebenso die Büro-Konten.
+   */
+  const daysMissingDescription = (): string[] => {
+    if (isAdmin) return [];
+    return WEEKDAYS.filter((day) =>
+      (weeklyEntries[day]?.entries ?? []).some((entry) => {
+        const site = sites.find((s) => s.number === entry.projectNumber);
+        if (site?.is_absence_code) return false;
+        return !entry.description?.trim();
+      }),
+    );
+  };
 
   /**
    * Löscht eine Berichtszeile. Stammt sie aus der Planung, wird sie als
@@ -1345,6 +1374,7 @@ export default function App() {
                                 entry={entry}
                                 day={day}
                                 sites={sites}
+                                office={isAdmin}
                                 onCancel={() => setEditReport(null)}
                                 onSave={(updated) => {
                                   setWeeklyEntries(prev => ({
@@ -1405,10 +1435,19 @@ export default function App() {
                             </div>
 
                             {/* Falls Tätigkeitsbeschreibung vorhanden, ohne Präfix anzeigen */}
-                            {entry.description && (
+                            {entry.description ? (
                               <div className="bg-white/60 p-2.5 rounded-xl border border-gray-100 mt-1">
                                 <p className="text-gray-600 text-xs leading-relaxed whitespace-pre-wrap">{entry.description}</p>
                               </div>
+                            ) : (
+                              // Aus der Planung übernommene Zeilen kommen ohne
+                              // Beschreibung an. Der Maler muss sehen, wo noch
+                              // etwas fehlt, bevor er abgeben will.
+                              !isAbsence && !isAdmin && (
+                                <div className="bg-amber-50 border border-amber-100 p-2.5 rounded-xl mt-1">
+                                  <p className="text-amber-700 text-xs font-medium">Tätigkeitsbeschreibung fehlt</p>
+                                </div>
+                              )
                             )}
                           </div>
                           );
@@ -1454,7 +1493,7 @@ export default function App() {
                           ))}
                         </datalist>
 
-                        <textarea id={`desc-${day}`} placeholder="Tätigkeitsbeschreibung" className="w-full p-3 bg-gray-100 rounded-xl border-none h-20 text-sm" />
+                        <textarea id={`desc-${day}`} placeholder={isAdmin ? 'Tätigkeitsbeschreibung' : 'Tätigkeitsbeschreibung *'} className="w-full p-3 bg-gray-100 rounded-xl border-none h-20 text-sm" />
                         
                         <div className="flex gap-2">
                           <div className="flex-1">
@@ -1509,16 +1548,21 @@ export default function App() {
                             alert("Bitte Baustelle / Adresse eingeben.");
                             return;
                           }
+                          if (!isAdmin && !description.trim()) {
+                            alert("Bitte Tätigkeitsbeschreibung eingeben.");
+                            return;
+                          }
                           if (!startTime || !endTime) {
                             alert("Bitte Start- und Endzeit eingeben.");
                             return;
                           }
 
-                          // Die Pause liegt zu festen Uhrzeiten und wird nicht
-                          // eingegeben: Abgezogen wird, was der Einsatz davon
-                          // überdeckt. Zwei Baustellen an einem Tag ziehen
-                          // dieselbe Pause deshalb nicht doppelt ab.
-                          const breakMins = breakMinutesFor(startTime, endTime, day as typeof WEEKDAYS[number]);
+                          // Beim Maler liegt die Pause zu festen Uhrzeiten und
+                          // wird nicht eingegeben: Abgezogen wird, was der
+                          // Einsatz davon überdeckt. Zwei Baustellen an einem
+                          // Tag ziehen dieselbe Pause deshalb nicht doppelt ab.
+                          // Im Büro gilt stattdessen § 4 ArbZG.
+                          const breakMins = breakMinutesForRole(startTime, endTime, day as typeof WEEKDAYS[number], isAdmin);
                           const hours = calculateHours(startTime, endTime, breakMins);
 
                           if (hours <= 0) {
@@ -1548,7 +1592,21 @@ export default function App() {
                     <>
                       <button onClick={handleResetWeeklyReport} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Woche leeren</button>
                       <button onClick={() => persistWeek()} className="w-full sm:flex-1 bg-brand-accent2 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent2/90 transition-colors cursor-pointer text-center">Entwurf speichern</button>
-                      <button onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('sendW'); }} className="w-full sm:flex-1 bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center">Bericht abgeben</button>
+                      <button onClick={() => {
+                        // Vor der Unterschrift prüfen, nicht danach — sonst
+                        // unterschreibt der Maler und erfährt erst dann, dass
+                        // noch etwas fehlt.
+                        const missing = daysMissingDescription();
+                        if (missing.length > 0) {
+                          alert(
+                            'Bei jedem Einsatz muss eine Tätigkeitsbeschreibung stehen.\n\nEs fehlt noch: ' +
+                              missing.join(', '),
+                          );
+                          return;
+                        }
+                        setIsSignatureModalOpen(true);
+                        setSignatureAction('sendW');
+                      }} className="w-full sm:flex-1 bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center">Bericht abgeben</button>
                     </>
                   )}
                 </div>

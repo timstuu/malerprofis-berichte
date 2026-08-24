@@ -7,7 +7,7 @@
  * je nach Entstehungsweg unterschiedlich viele Stunden — und das fällt
  * frühestens bei der Abrechnung auf.
  */
-import { breakMinutesFor, calculateHours, defaultShiftFor, TARGET_HOURS, statutoryBreakMinutes} from './hours.ts';
+import { breakMinutesFor, breakMinutesForRole, calculateHours, defaultShiftFor, TARGET_HOURS, statutoryBreakMinutes} from './hours.ts';
 
 let failed = 0;
 function check(name: string, actual: unknown, expected: unknown) {
@@ -97,6 +97,30 @@ check(
 
 // Bürotag 08:00–17:00 = 9,0 Std. Anwesenheit − 30 Min = 8,5 Std. netto.
 check('Bürotag netto', calculateHours('08:00', '17:00', statutoryBreakMinutes('08:00', '17:00')), 8.5);
+
+// ---------------------------------------------------------------------------
+// Welche Regel gilt für wen
+// ---------------------------------------------------------------------------
+
+// Derselbe Arbeitstag, zwei Ergebnisse — das ist der ganze Zweck der Weiche.
+// Zuvor bekam auch das Büro die 60 Minuten der Maler abgezogen.
+check('Regelschicht Maler: feste Fenster', breakMinutesForRole('07:00', '16:30', 'Montag', false), 60);
+check('Regelschicht Büro: § 4 ArbZG', breakMinutesForRole('07:00', '16:30', 'Montag', true), 45);
+
+// Der Freitag der Maler kennt nur ein Fenster, das Gesetz kennt keinen Freitag.
+check('Freitag Maler', breakMinutesForRole('07:00', '13:30', 'Freitag', false), 30);
+check('Freitag Büro', breakMinutesForRole('07:00', '13:30', 'Freitag', true), 30);
+
+// Nachmittagsschicht: Der Maler läuft an beiden Fenstern vorbei und verliert
+// nichts; im Büro zählt allein die Dauer.
+check('Nachmittag Maler', breakMinutesForRole('14:00', '20:00', 'Montag', false), 0);
+check('Nachmittag Büro', breakMinutesForRole('14:00', '20:00', 'Montag', true), 0);
+check('langer Nachmittag Maler', breakMinutesForRole('14:00', '21:00', 'Montag', false), 0);
+check('langer Nachmittag Büro', breakMinutesForRole('14:00', '21:00', 'Montag', true), 30);
+
+// Bürotag 07:00–16:30: 9,5 Std. Anwesenheit − 45 Min = 8,75 Std. Nach der alten
+// Rechnung mit 60 Min wären es 8,5 gewesen — eine Viertelstunde zu wenig.
+check('Bürotag netto nach neuer Regel', calculateHours('07:00', '16:30', breakMinutesForRole('07:00', '16:30', 'Montag', true)), 8.75);
 
 console.log(failed === 0 ? '\nAlle Prüfungen bestanden.' : `\n${failed} Prüfung(en) fehlgeschlagen.`);
 if (failed > 0) process.exit(1);
