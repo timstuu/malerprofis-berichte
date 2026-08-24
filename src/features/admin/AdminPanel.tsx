@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus, Trash2, Pencil, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase.ts';
 import UserManagement from './UserManagement.tsx';
+import WeeklyReportsAdmin from './WeeklyReportsAdmin.tsx';
 import LeaveAdmin from '../leave/LeaveAdmin.tsx';
 import type { Employee, Holiday, LeaveRequest, Site } from '../../lib/database.types.ts';
 
@@ -107,6 +108,9 @@ export default function AdminPanel({
         assignmentCountInRange={assignmentCountInRange}
         onChanged={onChanged}
       />
+
+      {/* --------------------------------------------------------------- */}
+      <WeeklyReportsAdmin />
 
       {/* --------------------------------------------------------------- */}
       <UserManagement
