@@ -109,6 +109,26 @@ export async function fetchLeaveRequests(): Promise<LeaveRequest[]> {
   );
 }
 
+/**
+ * Genehmigter Urlaub, der in einen Zeitraum hineinragt.
+ *
+ * Für die Anzeige im Planungsraster: Dort zählt nur, wer in der gezeigten Woche
+ * weg ist. Die vollständige Liste aller Anträge dafür zu laden, würde bei jedem
+ * Wochenwechsel die ganze Tabelle holen.
+ */
+export async function fetchApprovedVacations(from: string, to: string): Promise<LeaveRequest[]> {
+  return unwrap<LeaveRequest[]>(
+    await supabase
+      .from('leave_requests')
+      .select('*')
+      .eq('type', 'vacation')
+      .eq('status', 'approved')
+      .lte('start_date', to)
+      .gte('end_date', from),
+    'Genehmigter Urlaub',
+  );
+}
+
 export async function createLeaveRequest(
   employeeId: string,
   startDate: string,

@@ -21,6 +21,8 @@ import {
   deleteTradeEntry,
   deleteTradeRow,
   fetchAssignments,
+  fetchHolidays,
+  fetchApprovedVacations,
   fetchTradeEntries,
   fetchTradeRows,
   fetchWeekNotes,
@@ -44,6 +46,8 @@ import { sortEmployees } from '../../lib/users.ts';
 import { colorOf } from '../../lib/colors.ts';
 import type {
   Employee,
+  Holiday,
+  LeaveRequest,
   Site,
   TradeEntryRow,
   TradeRow,
@@ -66,6 +70,10 @@ import type {
 /** Anzahl der geplanten Tage: Montag bis Samstag. */
 const DAY_COUNT = 6;
 
+/** Abwesenheitscodes, unter denen Feiertag und Urlaub im Raster erscheinen. */
+const HOLIDAY_SITE_NUMBER = '040-7';
+const VACATION_SITE_NUMBER = '060-7';
+
 export default function WeekGrid({
   employees,
   sites,
@@ -83,6 +91,11 @@ export default function WeekGrid({
     return new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
   });
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
+  // Abwesenheiten werden nur angezeigt, nicht geplant: Sie stammen aus dem
+  // genehmigten Antrag bzw. dem Feiertagskalender und haben hier keine eigene
+  // Zeile, die jemand löschen könnte.
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
   const [notes, setNotes] = useState<WeekNote[]>([]);
   const [tradeRows, setTradeRows] = useState<TradeRow[]>([]);
   const [tradeEntries, setTradeEntries] = useState<TradeEntryRow[]>([]);
@@ -118,13 +131,17 @@ export default function WeekGrid({
     try {
       const from = format(weekStart, 'yyyy-MM-dd');
       const to = format(weekEnd, 'yyyy-MM-dd');
-      const [assign, weekNotes, rows, entries] = await Promise.all([
+      const [assign, weekNotes, rows, entries, holidayList, leaveList] = await Promise.all([
         fetchAssignments(from, to),
         fetchWeekNotes(from, to),
         fetchTradeRows(from),
         fetchTradeEntries(from, to),
+        fetchHolidays(from, to),
+        fetchApprovedVacations(from, to),
       ]);
       setAssignments(assign);
+      setHolidays(holidayList);
+      setLeaves(leaveList);
       setNotes(weekNotes);
       setTradeRows(rows);
       setTradeEntries(entries);
@@ -166,6 +183,32 @@ export default function WeekGrid({
 
   const cellAssignments = (employeeId: string, date: string) =>
     assignments.filter((a) => a.employee_id === employeeId && a.date === date);
+
+  /**
+   * Abwesenheiten einer Zelle: Feiertag für alle, genehmigter Urlaub für den
+   * Einzelnen. Beides ist abgeleitet und wird nicht gespeichert — wird ein
+   * Antrag zurückgezogen, verschwindet die Kachel von selbst.
+   *
+   * Geplant werden darf trotzdem: Wer am Feiertag oder im Urlaub doch arbeitet,
+   * bekommt seinen Einsatz daneben.
+   */
+  const cellAbsences = (employeeId: string, date: string) => {
+    const found: { key: string; number: string; label: string }[] = [];
+
+    const holiday = holidays.find((h) => h.date === date);
+    if (holiday) {
+      found.push({ key: `feiertag-${date}`, number: HOLIDAY_SITE_NUMBER, label: holiday.name });
+    }
+
+    const onVacation = leaves.some(
+      (l) => l.employee_id === employeeId && date >= l.start_date && date <= l.end_date,
+    );
+    if (onVacation) {
+      found.push({ key: `urlaub-${employeeId}-${date}`, number: VACATION_SITE_NUMBER, label: 'Urlaub' });
+    }
+
+    return found;
+  };
 
   const remove = async (assignment: AssignmentRow) => {
     if (!confirm(`Einsatz „${assignment.sites?.address ?? ''}“ löschen?`)) return;
@@ -505,6 +548,10 @@ export default function WeekGrid({
                       }`}
                     >
                       <div className="space-y-1">
+                        {cellAbsences(employee.id, day.iso).map((absence) => (
+                          <AbsenceTile key={absence.key} number={absence.number} label={absence.label} />
+                        ))}
+
                         {cell.map((a) =>
                           editAssignmentId === a.id ? (
                             <AssignmentForm
@@ -743,6 +790,22 @@ export default function WeekGrid({
  * Die Notiz steht unter den Uhrzeiten und wird bewusst nicht abgeschnitten: Ein
  * halber Hinweis („Kunde ab …“) ist schlimmer als gar keiner.
  */
+/**
+ * Feiertag oder genehmigter Urlaub im Raster.
+ *
+ * Sieht aus wie ein Einsatz und nennt die Baustellennummer, ist aber nur
+ * abgeleitet: keine Knöpfe, nicht verschiebbar, nicht löschbar. Der gestrichelte
+ * Rahmen sagt genau das — hier ist nichts geplant, hier ist jemand weg.
+ */
+function AbsenceTile({ number, label }: { number: string; label: string }) {
+  return (
+    <div className="rounded-xl px-2 py-1.5 text-xs border border-dashed border-gray-300 bg-gray-50/80">
+      <p className="font-bold truncate text-gray-500">{number}</p>
+      <p className="text-[#141414]/60 truncate">{label}</p>
+    </div>
+  );
+}
+
 function AssignmentTile({
   assignment,
   color,
