@@ -14,21 +14,15 @@ import {
   subMonths,
 } from 'date-fns';
 import { 
-  LayoutDashboard, 
   Clock, 
   CheckSquare, 
   Calendar, 
   Users, 
-  Plus, 
-  CheckCircle2, 
-  XCircle, 
-  ChevronRight,
   Menu,
   X,
   LogOut,
   Trash2,
   Pencil,
-  Edit3,
   RotateCcw,
   Camera,
   Palmtree,
@@ -57,14 +51,12 @@ import {
   fetchDefaultHours,
   fetchHolidays,
   fetchLeaveRequests,
-  fetchMyReportEntries,
   fetchSites,
   loadWeeklyReport,
   saveWeeklyReport,
   weekKey,
   withdrawLeaveRequest,
   type AssignmentRow,
-  type ReportEntryRow,
   type WeeklyEntries,
   type WeeklyEntry,
 } from './lib/data.ts';
@@ -226,7 +218,7 @@ function ReportEntryEditor({
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'wochenbericht' | 'planung' | 'abnahme' | 'leave' | 'admin' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'wochenbericht' | 'planung' | 'abnahme' | 'leave' | 'admin' | 'settings'>('planung');
   const [selectedWeek, setSelectedWeek] = useState(startOfISOWeek(new Date()));
   const { employee: currentUser, signOut } = useAuth();
   const isAdmin = currentUser?.role === 'admin';
@@ -234,8 +226,6 @@ export default function App() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
-  /** Bereits gespeicherte Berichtszeilen des angemeldeten Mitarbeiters. */
-  const [savedEntries, setSavedEntries] = useState<ReportEntryRow[]>([]);
   /**
    * Status des gerade geöffneten Wochenberichts. Ein 'signed' abgegebener
    * Bericht ist gesperrt: kein Bearbeiten, kein Löschen, kein Hinzufügen.
@@ -250,8 +240,6 @@ export default function App() {
    */
   const [nearbyAssignments, setNearbyAssignments] = useState<AssignmentRow[]>([]);
   const [reportHistory, setReportHistory] = useState<ReportHistory[]>([]);
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [selectedCalendarDay, setSelectedCalendarDay] = useState<Date>(new Date());
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'offline'>('idle');
   const [prefillNotice, setPrefillNotice] = useState<string | null>(null);
@@ -395,17 +383,15 @@ export default function App() {
         fetchEmployees(),
         fetchSites(),
         fetchLeaveRequests(),
-        fetchMyReportEntries(currentUser.id),
         fetchHolidays(from, to),
         fetchAssignments(from, to),
       ]);
 
-      const [emp, siteList, leaves, entries, holidayList, assignments] = results;
+      const [emp, siteList, leaves, holidayList, assignments] = results;
 
       if (emp.status === 'fulfilled') setEmployees(emp.value);
       if (siteList.status === 'fulfilled') setSites(siteList.value);
       if (leaves.status === 'fulfilled') setLeaveRequests(leaves.value);
-      if (entries.status === 'fulfilled') setSavedEntries(entries.value);
       if (holidayList.status === 'fulfilled') setHolidays(holidayList.value);
       if (assignments.status === 'fulfilled') setNearbyAssignments(assignments.value);
 
@@ -515,7 +501,6 @@ export default function App() {
         if (result.importedAssignmentIds.length > 0) {
           await markAssignments(currentUser.id, result.importedAssignmentIds, 'imported');
         }
-        setSavedEntries(await fetchMyReportEntries(currentUser.id));
 
         setPrefillNotice(
           `${result.addedCount} ${result.addedCount === 1 ? 'Eintrag wurde' : 'Einträge wurden'} aus der Planung übernommen.`,
@@ -648,7 +633,6 @@ export default function App() {
       setSaveState('saving');
       try {
         await saveWeeklyReport(currentUser.id, selectedWeek, weeklyEntries, sites, options);
-        setSavedEntries(await fetchMyReportEntries(currentUser.id));
         setSaveState('saved');
         return true;
       } catch (error) {
@@ -884,123 +868,7 @@ export default function App() {
     sigCanvas.current?.clear();
   };
 
-  // Calendar helper functions
-  const getCalendarDays = () => {
-    const firstDayOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
-    const lastDayOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
-    
-    const startDate = startOfISOWeek(firstDayOfMonth);
-    const endDate = addDays(startOfISOWeek(lastDayOfMonth), 6);
-    
-    const days: Date[] = [];
-    let curr = startDate;
-    while (curr <= endDate) {
-      days.push(curr);
-      curr = addDays(curr, 1);
-    }
-    return days;
-  };
-
-  const getCalendarDayStatus = (date: Date) => {
-    const dayStr = format(date, 'yyyy-MM-dd');
-    const isCurrentMonth = date.getMonth() === currentMonth.getMonth() && date.getFullYear() === currentMonth.getFullYear();
-    
-    if (!isCurrentMonth) {
-      return 'outside';
-    }
-
-    // Check sick requests / entries first
-    const hasSickLeave = leaveRequests.some(req => {
-      if (req.employee_id !== currentUser?.id || req.status === 'rejected') return false;
-      const isSickType = req.type.toLowerCase().includes('sick') || req.type.toLowerCase().includes('krank');
-      return isSickType && dayStr >= req.start_date && dayStr <= req.end_date;
-    });
-
-    const dayOfWeekIndex = (date.getDay() + 6) % 7; // Monday = 0, Sunday = 6
-    const correspondingWeekDayDate = addDays(selectedWeek, dayOfWeekIndex);
-    const hasDraftSick = (() => {
-      if (format(correspondingWeekDayDate, 'yyyy-MM-dd') === dayStr) {
-        const germanDays = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
-        const germanDayName = germanDays[date.getDay()];
-        const draftEntries = weeklyEntries[germanDayName]?.entries || [];
-        return draftEntries.some(e => 
-          e.project.toLowerCase().includes('krank') || 
-          e.description.toLowerCase().includes('krank')
-        );
-      }
-      return false;
-    })();
-
-    // Bereits gespeicherte Berichtszeilen dieses Tages
-    const dailySavedEntries = savedEntries.filter(entry => entry.date === dayStr);
-    const hasTimeEntrySick = dailySavedEntries.some(e =>
-      (e.sites?.address ?? '').toLowerCase().includes('krank') ||
-      (e.description ?? '').toLowerCase().includes('krank')
-    );
-
-    if (hasSickLeave || hasDraftSick || hasTimeEntrySick) {
-      return 'sick';
-    }
-
-    // Check leave requests (Urlaub or Flex is BLAU)
-    const hasLeave = leaveRequests.some(req => {
-      if (req.employee_id !== currentUser?.id || req.status === 'rejected') return false;
-      const isSickType = req.type.toLowerCase().includes('sick') || req.type.toLowerCase().includes('krank');
-      return !isSickType && dayStr >= req.start_date && dayStr <= req.end_date;
-    });
-
-    // Check draft weekly entries for vacation / flex
-    const hasDraftVacation = (() => {
-      if (format(correspondingWeekDayDate, 'yyyy-MM-dd') === dayStr) {
-        const germanDays = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
-        const germanDayName = germanDays[date.getDay()];
-        const draftEntries = weeklyEntries[germanDayName]?.entries || [];
-        return draftEntries.some(e => 
-          e.project.toLowerCase().includes('urlaub') || 
-          e.project.toLowerCase().includes('flex') ||
-          e.description.toLowerCase().includes('urlaub') ||
-          e.description.toLowerCase().includes('flex')
-        );
-      }
-      return false;
-    })();
-
-    // Check saved report entries for vacation / flex
-    const hasTimeEntryVacation = dailySavedEntries.some(e => {
-      const address = (e.sites?.address ?? '').toLowerCase();
-      const description = (e.description ?? '').toLowerCase();
-      return (
-        address.includes('urlaub') ||
-        address.includes('flex') ||
-        description.includes('urlaub') ||
-        description.includes('flex')
-      );
-    });
-
-    if (hasLeave || hasDraftVacation || hasTimeEntryVacation) {
-      return 'leave';
-    }
-
-    // Check work hours (GRÜN)
-    const totalTimeHours = dailySavedEntries.reduce((sum, e) => sum + Number(e.hours), 0);
-
-    let totalDraftHours = 0;
-    if (format(correspondingWeekDayDate, 'yyyy-MM-dd') === dayStr) {
-      const germanDays = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
-      const germanDayName = germanDays[date.getDay()];
-      const draftEntries = weeklyEntries[germanDayName]?.entries || [];
-      totalDraftHours = draftEntries.reduce((sum, e) => sum + e.hours, 0);
-    }
-
-    if (totalTimeHours > 0 || totalDraftHours > 0) {
-      return 'work';
-    }
-
-    return 'empty';
-  };
-
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'planung', label: 'Wochenplanung', icon: Calendar },
     { id: 'wochenbericht', label: 'Wochenberichte', icon: Clock },
     { id: 'abnahme', label: 'Abnahme', icon: CheckSquare },
@@ -1078,251 +946,6 @@ export default function App() {
           )}
 
           <AnimatePresence mode="wait">
-            {activeTab === 'dashboard' && (
-              <motion.div
-                key="dashboard"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="space-y-6"
-              >
-                {/* Header Welcome Card */}
-                <div className="bg-white p-6 rounded-3xl border border-[#141414]/5 shadow-sm">
-                  <h2 className="text-2xl font-bold tracking-tight mb-1 text-gray-900">
-                    Moin, {userName.firstName || currentUser?.first_name || 'Mitarbeiter'}!
-                  </h2>
-                  <p className="text-sm text-[#141414]/60">
-                    Heute ist {format(new Date(), 'EEEE', { locale: de })}, der {format(new Date(), 'd. MMMM yyyy', { locale: de })}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-                  {/* Calendar main section */}
-                  <div className="lg:col-span-3 bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-4">
-                    {/* Month header & navigation */}
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex flex-col">
-                        <h3 className="text-lg font-bold text-[#141414] capitalize">
-                          {format(currentMonth, 'MMMM yyyy', { locale: de })}
-                        </h3>
-                      </div>
-                      <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-xl border border-gray-100 shadow-inner">
-                        <button 
-                          onClick={() => setCurrentMonth(prev => subMonths(prev, 1))} 
-                          className="p-1.5 hover:bg-white hover:shadow-sm rounded-lg transition-all text-gray-600 font-bold"
-                          title="Vorheriger Monat"
-                        >
-                          &lt;
-                        </button>
-                        <button 
-                          onClick={() => setCurrentMonth(new Date())} 
-                          className="px-2 py-1 text-[10px] font-bold hover:bg-white hover:shadow-sm rounded-lg transition-all text-gray-500 uppercase"
-                          title="Aktueller Monat"
-                        >
-                          Heute
-                        </button>
-                        <button 
-                          onClick={() => setCurrentMonth(prev => addMonths(prev, 1))} 
-                          className="p-1.5 hover:bg-white hover:shadow-sm rounded-lg transition-all text-gray-600 font-bold"
-                          title="Nächster Monat"
-                        >
-                          &gt;
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Week days header */}
-                    <div className="grid grid-cols-7 gap-1 md:gap-2 text-center">
-                      {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(d => (
-                        <div key={d} className="text-[10px] md:text-xs font-bold text-gray-400 uppercase tracking-wider">
-                          {d}
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Days grid */}
-                    <div className="grid grid-cols-7 gap-2 md:gap-3">
-                      {getCalendarDays().map((day, idx) => {
-                        const status = getCalendarDayStatus(day);
-                        const isSelected = format(day, 'yyyy-MM-dd') === format(selectedCalendarDay, 'yyyy-MM-dd');
-                        const isToday = format(day, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
-                        
-                        return (
-                          <button
-                            key={idx}
-                            onClick={() => setSelectedCalendarDay(day)}
-                            className={cn(
-                              "aspect-square w-full max-w-[44px] mx-auto flex flex-col items-center justify-center rounded-full font-semibold text-xs md:text-sm relative transition-all duration-150 outline-none",
-                              status === 'outside' && "border border-dashed border-gray-200 text-gray-300 bg-gray-50/30",
-                              status === 'work' && "bg-emerald-500 text-white border border-emerald-500 shadow-sm shadow-emerald-100",
-                              status === 'leave' && "bg-blue-500 text-white border border-blue-500 shadow-sm shadow-blue-100",
-                              status === 'sick' && "bg-red-500 text-white border border-red-500 shadow-sm shadow-red-100",
-                              status === 'empty' && "bg-white text-gray-700 border border-gray-200 hover:border-brand-accent1 hover:bg-gray-50 cursor-pointer",
-                              isSelected && "ring-2 ring-brand-accent1 ring-offset-2 scale-105 z-10 font-bold"
-                            )}
-                          >
-                            <span>{day.getDate()}</span>
-                            {isToday && (
-                              <span className={cn(
-                                "absolute bottom-1 w-1 h-1 rounded-full",
-                                status === 'work' || status === 'leave' || status === 'sick' ? 'bg-white' : 'bg-brand-accent1'
-                              )} />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {/* Calendar legend */}
-                    <div className="pt-2">
-                      <div className="bg-gray-50/70 p-4 rounded-2xl border border-gray-100/50">
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2.5">Legende</p>
-                        <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-xs">
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-emerald-500" />
-                            <span className="text-gray-600">Stunden erfasst</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-blue-500" />
-                            <span className="text-gray-600">Urlaub / Flex</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-red-500" />
-                            <span className="text-gray-600">Krank</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-white border border-gray-200" />
-                            <span className="text-gray-600">Keine Berichte</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Day details sidebar/card */}
-                  <div className="lg:col-span-2 space-y-4">
-                    <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-[#141414]/5 space-y-4 h-full flex flex-col justify-between">
-                      <div>
-                        <h3 className="text-lg font-bold text-[#141414]">Details zum Tag</h3>
-                        <p className="text-sm text-brand-accent1 font-medium capitalize">
-                          {format(selectedCalendarDay, 'EEEE, d. MMMM yyyy', { locale: de })}
-                        </p>
-                      </div>
-
-                      <div className="flex-1 overflow-y-auto space-y-3 min-h-[220px] mt-4">
-                        {(() => {
-                          const selectedDayStr = format(selectedCalendarDay, 'yyyy-MM-dd');
-                          
-                          // 1. Bereits gespeicherte Berichtszeilen dieses Tages
-                          const dayTimeEntries = savedEntries.filter(e => e.date === selectedDayStr);
-
-                          // 2. Get Draft weekly entries if in selectedWeek
-                          const isDayInSelectedWeek = format(startOfISOWeek(selectedCalendarDay), 'yyyy-MM-dd') === format(selectedWeek, 'yyyy-MM-dd');
-                          const dayDraftEntries = (() => {
-                            if (isDayInSelectedWeek) {
-                              const germanDays = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
-                              const germanDayName = germanDays[selectedCalendarDay.getDay()];
-                              return weeklyEntries[germanDayName]?.entries || [];
-                            }
-                            return [];
-                          })();
-
-                          // 3. Get Leave requests
-                          const dayLeaveRequests = leaveRequests.filter(req => {
-                            if (req.employee_id !== currentUser?.id) return false;
-                            return selectedDayStr >= req.start_date && selectedDayStr <= req.end_date;
-                          });
-
-                          const hasAnyEntries = dayTimeEntries.length > 0 || dayDraftEntries.length > 0 || dayLeaveRequests.length > 0;
-
-                          if (!hasAnyEntries) {
-                            return (
-                              <div className="h-full flex flex-col items-center justify-center text-center p-4 py-8 space-y-4">
-                                <p className="text-sm text-gray-400">Keine Stunden oder Abwesenheiten für diesen Tag erfasst.</p>
-                                <div className="flex flex-col gap-2 w-full">
-                                  <button 
-                                    onClick={() => {
-                                      setSelectedWeek(startOfISOWeek(selectedCalendarDay));
-                                      setActiveTab('wochenbericht');
-                                    }} 
-                                    className="w-full text-xs font-bold bg-gray-50 hover:bg-gray-100 border border-gray-100 text-brand-accent2 py-3 rounded-xl transition-all"
-                                  >
-                                    Bericht ausfüllen
-                                  </button>
-                                  <button 
-                                    onClick={() => setActiveTab('leave')} 
-                                    className="w-full text-xs font-bold bg-gray-50 hover:bg-gray-100 border border-gray-100 text-blue-600 py-3 rounded-xl transition-all"
-                                  >
-                                    Urlaub einreichen
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          }
-
-                          return (
-                            <div className="space-y-3">
-                              {/* Leave Requests */}
-                              {dayLeaveRequests.map((req, idx) => {
-                                const isSick = req.type.toLowerCase().includes('sick') || req.type.toLowerCase().includes('krank');
-                                const typeLabel = isSick ? 'Krankmeldung' : (req.type === 'vacation' ? 'Urlaub' : 'Flex');
-                                return (
-                                  <div 
-                                    key={`leave-${idx}`} 
-                                    className={cn(
-                                      "flex justify-between items-center p-4 rounded-2xl border",
-                                      isSick ? "bg-red-50/50 border-red-100/50" : "bg-blue-50/50 border-blue-100/50"
-                                    )}
-                                  >
-                                    <div>
-                                      <p className={cn("font-semibold text-sm", isSick ? "text-red-900" : "text-blue-900")}>Abwesenheit ({typeLabel})</p>
-                                      <p className={cn("text-xs capitalize", isSick ? "text-red-500" : "text-blue-500")}>Status: {req.status === 'approved' ? 'Genehmigt' : req.status === 'rejected' ? 'Abgelehnt' : 'Ausstehend'}</p>
-                                    </div>
-                                    <span className={cn(
-                                      "text-[10px] font-bold px-2.5 py-1 rounded-lg uppercase",
-                                      isSick ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"
-                                    )}>{req.status}</span>
-                                  </div>
-                                );
-                              })}
-
-                              {/* Gespeicherte Berichtszeilen */}
-                              {dayTimeEntries.map((e, idx) => (
-                                <div key={`time-${idx}`} className="flex justify-between items-center bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
-                                  <div>
-                                    <p className="font-semibold text-sm text-emerald-900">
-                                      {e.sites?.address ?? 'Ohne Baustelle'}{' '}
-                                      <span className="text-[10px] text-emerald-700 font-bold uppercase">(Bericht)</span>
-                                    </p>
-                                    <p className="text-xs text-emerald-600">{e.description || 'Keine Notiz'}</p>
-                                  </div>
-                                  <span className="font-mono text-sm font-bold bg-emerald-100 text-emerald-800 px-3 py-1 rounded-xl">{e.hours} Std.</span>
-                                </div>
-                              ))}
-
-                              {/* Draft weekly Entries */}
-                              {dayDraftEntries.map((e, idx) => (
-                                <div key={`draft-${idx}`} className="flex justify-between items-center bg-amber-50/50 p-4 rounded-2xl border border-amber-100">
-                                  <div>
-                                    <p className="font-semibold text-sm text-amber-900">
-                                      {e.project} <span className="text-[10px] text-amber-700 font-bold uppercase">(Entwurf)</span>
-                                    </p>
-                                    <p className="text-xs text-amber-600">{e.description || 'Keine Beschreibung'}</p>
-                                  </div>
-                                  <span className="font-mono text-sm font-bold bg-amber-100 text-amber-800 px-3 py-1 rounded-xl">{e.hours} Std.</span>
-                                </div>
-                              ))}
-
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
             {activeTab === 'wochenbericht' && (
               <motion.div
                 key="wochenbericht"
@@ -2058,6 +1681,18 @@ export default function App() {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-6"
               >
+                {/* Begrüßung. Nennt bewusst immer den heutigen Tag — unabhängig
+                    davon, durch welche Woche das Raster darunter gerade blättert. */}
+                <div className="bg-white p-6 rounded-3xl border border-[#141414]/5 shadow-sm">
+                  <h2 className="text-2xl font-bold tracking-tight mb-1 text-gray-900">
+                    Moin, {userName.firstName || currentUser?.first_name || 'Mitarbeiter'}!
+                  </h2>
+                  <p className="text-sm text-[#141414]/60">
+                    Heute ist {format(new Date(), 'EEEE', { locale: de })}, der{' '}
+                    {format(new Date(), 'd. MMMM yyyy', { locale: de })}
+                  </p>
+                </div>
+
                 <div>
                   <h2 className="text-2xl font-bold">Wochenplanung</h2>
                   <p className="text-sm text-[#141414]/50 mt-1">
