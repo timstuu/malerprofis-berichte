@@ -55,7 +55,7 @@ async function loadLogo(): Promise<HTMLImageElement | null> {
     const base = import.meta.env.BASE_URL.endsWith('/')
       ? import.meta.env.BASE_URL
       : `${import.meta.env.BASE_URL}/`;
-    img.src = `${window.location.origin}${base}logo.png?v=1.0.4`;
+    img.src = `${window.location.origin}${base}logo.png?v=${__APP_VERSION__}`;
     await new Promise((resolve, reject) => {
       img.onload = resolve;
       img.onerror = reject;

@@ -683,7 +683,7 @@ export default function App() {
     try {
       const img = new Image();
       const baseUrl = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-      img.src = `${window.location.origin}${baseUrl}logo.png?v=1.0.4`;
+      img.src = `${window.location.origin}${baseUrl}logo.png?v=${__APP_VERSION__}`;
       await new Promise((resolve, reject) => {
         img.onload = resolve;
         img.onerror = reject;
@@ -2142,7 +2142,7 @@ export default function App() {
                     <div className="p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                       <div className="space-y-1">
                         <p className="text-sm font-bold text-gray-900">Malerprofis Uderstadt</p>
-                        <p className="text-xs text-[#141414]/50">Version 1.0.4 (Build 2026.07.13)</p>
+                        <p className="text-xs text-[#141414]/50">Version {__APP_VERSION__} (Build {__BUILD_DATE__})</p>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">

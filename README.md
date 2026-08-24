@@ -199,6 +199,27 @@ npm run dev
 | `npm run build` | Produktionsbuild nach `dist/` |
 | `npm run lint` | Typprüfung (`tsc --noEmit`) |
 | `npm run test` | Prüft die Übernahme der Planung und die Urlaubsberechnung |
+| `npm run version:patch` | Version erhöhen — `:minor` und `:major` ebenso |
+
+### Version
+
+Die Version steht **nur** in `package.json`. Beim Bauen setzt Vite sie als
+`__APP_VERSION__` ein, dazu das Baudatum als `__BUILD_DATE__` (siehe `define`
+in `vite.config.ts`). Beide erscheinen unter Einstellungen → App-Info und
+hängen als `?v=` am Logo, damit ein neues Logo nicht aus dem Cache kommt.
+
+Nirgends im Quelltext steht also eine Versionsnummer. Zuvor lag sie an vier
+Stellen von Hand gepflegt herum und war entsprechend auseinandergelaufen.
+
+Die Version gehört zu jeder fertigen Etappe dazu:
+
+```bash
+npm run version:minor
+```
+
+`patch` für Korrekturen, `minor` für neue Funktionen, `major`, wenn sich ein
+Arbeitsablauf grundlegend ändert. Die Skripte setzen bewusst keinen Git-Tag —
+die Änderung an `package.json` geht mit dem Commit der Etappe mit.
 
 ## Aufbau
 
