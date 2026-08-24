@@ -302,6 +302,18 @@ export async function deleteTradeEntry(id: string): Promise<void> {
   if (error) throw new Error(`Eintrag konnte nicht gelöscht werden: ${error.message}`);
 }
 
+/** Ändert Baustelle und Notiz eines Gewerk-Eintrags. Zeile und Tag bleiben. */
+export async function updateTradeEntry(
+  id: string,
+  fields: { site_id: string; note: string | null },
+): Promise<void> {
+  const { error } = await supabase
+    .from('trade_entries')
+    .update({ site_id: fields.site_id, note: fields.note })
+    .eq('id', id);
+  if (error) throw new Error(`Eintrag konnte nicht geändert werden: ${error.message}`);
+}
+
 /** Verschiebt einen Eintrag auf einen anderen Tag und/oder in eine andere Zeile. */
 export async function moveTradeEntry(
   id: string,

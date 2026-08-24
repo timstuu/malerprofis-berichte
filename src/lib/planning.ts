@@ -77,6 +77,38 @@ export async function moveAssignment(
 }
 
 /**
+ * Ändert Baustelle und Uhrzeiten eines bestehenden Einsatzes.
+ *
+ * Mitarbeiter und Tag bleiben, wie sie sind — die verschiebt man durch Ziehen.
+ * Die Pause wird wie beim Anlegen neu aus dem Wochentag gerechnet, damit ein
+ * geänderter Einsatz nicht auf einem alten Abzug sitzen bleibt.
+ *
+ * Bewusst ohne Rücksicht darauf, ob die Schicht schon in einem Wochenbericht
+ * steht: Anders als beim Verschieben wird hier nicht gewarnt. Ein bereits
+ * übernommener Bericht bleibt auf seinem Stand; das ist so entschieden.
+ */
+export async function updateAssignment(
+  id: string,
+  fields: { siteId: string; date: string; startTime: string; endTime: string; note?: string | null },
+): Promise<void> {
+  const { error } = await supabase
+    .from('assignments')
+    .update({
+      site_id: fields.siteId,
+      start_time: fields.startTime,
+      end_time: fields.endTime,
+      break_minutes: breakMinutesForDate(
+        fields.startTime.slice(0, 5),
+        fields.endTime.slice(0, 5),
+        new Date(`${fields.date}T00:00:00`),
+      ),
+      note: fields.note && fields.note.trim() ? fields.note.trim() : null,
+    })
+    .eq('id', id);
+  if (error) throw new Error(`Einsatz konnte nicht geändert werden: ${error.message}`);
+}
+
+/**
  * Wer von diesen Einsätzen wurde bereits in einen Wochenbericht übernommen?
  *
  * Wird vor dem Verschieben gebraucht: Landet ein bereits übernommener Einsatz

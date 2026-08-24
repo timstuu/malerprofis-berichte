@@ -35,7 +35,8 @@ import {
   RotateCcw,
   Camera,
   Palmtree,
-  Settings
+  Settings,
+  Lock
 } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 import { motion, AnimatePresence } from 'motion/react';
@@ -101,6 +102,124 @@ interface WeekDraft {
 
 const DRAFT_KEY = 'weekDraft';
 
+/**
+ * Inline-Editor einer Berichtszeile. Ersetzt die Anzeige-Karte, solange die
+ * Zeile bearbeitet wird, und gibt beim Speichern eine neue `WeeklyEntry` zurück
+ * — Id und Herkunft (`sourceAssignmentId`) bleiben erhalten, damit eine aus der
+ * Planung übernommene Zeile ihre Verbindung behält.
+ *
+ * Die Pause folgt wie im Anlegen-Feld den festen Pausenfenstern des Wochentags;
+ * Stunden und Pause werden aus den Zeiten gerechnet, nicht eingegeben.
+ * Abwesenheitszeilen (Urlaub, Feiertag, Büro) landen gar nicht hier — der
+ * Bericht öffnet den Stift nur für echte Arbeitszeilen.
+ */
+function ReportEntryEditor({
+  entry,
+  day,
+  sites,
+  onCancel,
+  onSave,
+}: {
+  entry: WeeklyEntry;
+  day: string;
+  sites: Site[];
+  onCancel: () => void;
+  onSave: (updated: WeeklyEntry) => void;
+}) {
+  const [projectNumber, setProjectNumber] = useState(entry.projectNumber ?? '');
+  const [project, setProject] = useState(entry.project ?? '');
+  const [description, setDescription] = useState(entry.description ?? '');
+  const [start, setStart] = useState(entry.startTime ?? '');
+  const [end, setEnd] = useState(entry.endTime ?? '');
+
+  const pause = start && end ? breakMinutesFor(start, end, day as (typeof WEEKDAYS)[number]) : 0;
+  const hours = start && end ? calculateHours(start, end, pause) : entry.hours;
+
+  const save = () => {
+    if (!project.trim()) {
+      alert('Bitte Baustelle / Adresse eingeben.');
+      return;
+    }
+    if (!start || !end) {
+      alert('Bitte Start- und Endzeit eingeben.');
+      return;
+    }
+    if (hours <= 0) {
+      alert('Die berechnete Arbeitszeit muss größer als 0 sein.');
+      return;
+    }
+    onSave({
+      ...entry,
+      projectNumber: projectNumber.trim(),
+      project: project.trim(),
+      description: description.trim(),
+      startTime: start,
+      endTime: end,
+      pause,
+      hours,
+    });
+  };
+
+  return (
+    <div className="p-3.5 bg-white rounded-2xl border border-brand-accent2/40 flex flex-col gap-2">
+      <input
+        type="text"
+        list="editentry-num"
+        value={projectNumber}
+        onChange={(e) => setProjectNumber(e.target.value)}
+        placeholder="Baustellennummer"
+        className="w-full p-2.5 bg-gray-100 rounded-xl border-none text-sm"
+      />
+      <datalist id="editentry-num">
+        {sites.map((p) => (
+          <option key={`enum-${p.id}`} value={p.number}>{p.address}</option>
+        ))}
+      </datalist>
+
+      <input
+        type="text"
+        list="editentry-proj"
+        value={project}
+        onChange={(e) => setProject(e.target.value)}
+        placeholder="Baustelle/Adresse"
+        className="w-full p-2.5 bg-gray-100 rounded-xl border-none text-sm"
+      />
+      <datalist id="editentry-proj">
+        {sites.map((p) => (
+          <option key={`eproj-${p.id}`} value={p.address}>{p.number}</option>
+        ))}
+      </datalist>
+
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        placeholder="Tätigkeitsbeschreibung"
+        className="w-full p-2.5 bg-gray-100 rounded-xl border-none h-16 text-sm"
+      />
+
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <label className="text-[11px] font-semibold text-[#141414]/40 uppercase tracking-wider block mb-1">Startzeit</label>
+          <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="w-full p-2.5 bg-gray-100 rounded-xl border-none text-sm outline-none" />
+        </div>
+        <div className="flex-1">
+          <label className="text-[11px] font-semibold text-[#141414]/40 uppercase tracking-wider block mb-1">Endzeit</label>
+          <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="w-full p-2.5 bg-gray-100 rounded-xl border-none text-sm outline-none" />
+        </div>
+      </div>
+
+      <p className="text-[11px] text-gray-500 px-0.5">
+        {start && end ? `${hours} Std. · ${pause ? `Pause ${pause} Min.` : 'keine Pause'}` : 'Zeiten eingeben'}
+      </p>
+
+      <div className="flex gap-2 pt-1">
+        <button onClick={save} className="flex-1 bg-brand-accent2 text-white p-2.5 rounded-xl font-bold hover:bg-brand-accent2/90 cursor-pointer text-sm">Übernehmen</button>
+        <button onClick={onCancel} className="flex-1 bg-gray-200 text-[#141414] p-2.5 rounded-xl font-bold hover:bg-gray-300 cursor-pointer text-sm">Abbruch</button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'wochenbericht' | 'planung' | 'abnahme' | 'leave' | 'admin' | 'settings'>('dashboard');
   const [selectedWeek, setSelectedWeek] = useState(startOfISOWeek(new Date()));
@@ -112,6 +231,13 @@ export default function App() {
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   /** Bereits gespeicherte Berichtszeilen des angemeldeten Mitarbeiters. */
   const [savedEntries, setSavedEntries] = useState<ReportEntryRow[]>([]);
+  /**
+   * Status des gerade geöffneten Wochenberichts. Ein 'signed' abgegebener
+   * Bericht ist gesperrt: kein Bearbeiten, kein Löschen, kein Hinzufügen.
+   */
+  const [reportStatus, setReportStatus] = useState<'draft' | 'signed' | null>(null);
+  /** Berichtszeile, die gerade zum Ändern offen ist (Tag + Zeilen-Id). */
+  const [editReport, setEditReport] = useState<{ day: string; id: string } | null>(null);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   /**
    * Einsätze im Umfeld von heute. Wird gebraucht, um vor einer Urlaubs-
@@ -431,8 +557,15 @@ export default function App() {
 
       if (cancelled) return;
 
+      setReportStatus(remote ? (remote.status === 'signed' ? 'signed' : 'draft') : null);
+      setEditReport(null);
+
       let base: WeeklyEntries;
-      if (draft) {
+      if (remote?.status === 'signed') {
+        // Ein abgegebener Bericht wird genau so gezeigt, wie er unterschrieben
+        // wurde — kein lokaler Entwurf schiebt sich mehr davor.
+        base = remote.entries;
+      } else if (draft) {
         base = draft.entries;
       } else if (remote) {
         base = remote.entries;
@@ -1259,16 +1392,61 @@ export default function App() {
                       </div>
                       
                       <div className="space-y-3">
-                        {weeklyEntries[day]?.entries.map(entry => (
+                        {weeklyEntries[day]?.entries.map(entry => {
+                          // Urlaub, Feiertag und Büro (Abwesenheitscodes) sind
+                          // nicht bearbeitbar — sie entstehen automatisch und
+                          // folgen eigenen Regeln. Ein abgegebener Bericht ist
+                          // ganz gesperrt.
+                          const entrySite = sites.find(s => s.number === entry.projectNumber);
+                          const isAbsence = entrySite?.is_absence_code ?? false;
+                          const locked = reportStatus === 'signed';
+
+                          if (editReport?.day === day && editReport?.id === entry.id) {
+                            return (
+                              <ReportEntryEditor
+                                key={entry.id}
+                                entry={entry}
+                                day={day}
+                                sites={sites}
+                                onCancel={() => setEditReport(null)}
+                                onSave={(updated) => {
+                                  setWeeklyEntries(prev => ({
+                                    ...prev,
+                                    [day]: {
+                                      entries: (prev[day]?.entries ?? []).map(e =>
+                                        e.id === entry.id ? updated : e,
+                                      ),
+                                    },
+                                  }));
+                                  setEditReport(null);
+                                }}
+                              />
+                            );
+                          }
+
+                          return (
                           <div key={entry.id} className="relative p-3.5 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-1.5">
-                            {/* Löschen-Funktion als kleines Icon oben rechts */}
-                            <button
-                              onClick={() => handleDeleteEntry(day, entry)}
-                              className="absolute top-2.5 right-2.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 p-1.5 rounded-xl transition-colors cursor-pointer"
-                              title="Eintrag löschen"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            {/* Bearbeiten und Löschen als kleine Icons oben rechts */}
+                            {!locked && (
+                              <div className="absolute top-2.5 right-2.5 flex items-center gap-1">
+                                {!isAbsence && (
+                                  <button
+                                    onClick={() => setEditReport({ day, id: entry.id })}
+                                    className="text-gray-400 hover:text-brand-accent2 hover:bg-gray-100 p-1.5 rounded-xl transition-colors cursor-pointer"
+                                    title="Eintrag bearbeiten"
+                                  >
+                                    <Pencil className="w-4 h-4" />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleDeleteEntry(day, entry)}
+                                  className="text-gray-400 hover:text-red-500 hover:bg-gray-100 p-1.5 rounded-xl transition-colors cursor-pointer"
+                                  title="Eintrag löschen"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            )}
 
                             {/* Erste Zeile: Baustellennummer als Text */}
                             {entry.projectNumber && (
@@ -1279,7 +1457,7 @@ export default function App() {
 
                             {/* Darunter: Baustelle / Adresse mit Stunden in Klammern */}
                             <div>
-                              <p className="text-[#141414] font-medium text-sm leading-snug pr-7">
+                              <p className="text-[#141414] font-medium text-sm leading-snug pr-14">
                                 {entry.project} ({entry.hours}h)
                               </p>
                               {entry.startTime && entry.endTime && (
@@ -1291,14 +1469,21 @@ export default function App() {
 
                             {/* Falls Tätigkeitsbeschreibung vorhanden, ohne Präfix anzeigen */}
                             {entry.description && (
-                              <div className="bg-white/60 p-2.5 rounded-xl border border-gray-100 mt-1 pr-7">
+                              <div className="bg-white/60 p-2.5 rounded-xl border border-gray-100 mt-1">
                                 <p className="text-gray-600 text-xs leading-relaxed whitespace-pre-wrap">{entry.description}</p>
                               </div>
                             )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
 
+                      {reportStatus === 'signed' ? (
+                      <div className="flex items-center gap-2 text-xs text-gray-400 bg-gray-50 rounded-xl p-3 mt-1">
+                        <Lock className="w-3.5 h-3.5 shrink-0" />
+                        Abgegeben — dieser Tag ist gesperrt.
+                      </div>
+                      ) : (
                       <div className="space-y-2 pt-2">
                         <input
                           type="text"
@@ -1413,14 +1598,26 @@ export default function App() {
                           (document.getElementById(`end-${day}`) as HTMLInputElement).value = '';
                         }} className="w-full bg-brand-accent2 text-white p-2 rounded-xl font-bold hover:bg-brand-accent2/90 cursor-pointer">Baustelle hinzufügen</button>
                       </div>
+                      )}
                     </div>
                   ))}
                 </div>
                 <div className="flex flex-col sm:flex-row gap-3 pt-6 w-full">
-                  <button onClick={handleResetWeeklyReport} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Woche leeren</button>
-                  <button onClick={() => handleSaveReport('wochenbericht')} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Als PDF</button>
-                  <button onClick={() => persistWeek()} className="w-full sm:flex-1 bg-brand-accent2 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent2/90 transition-colors cursor-pointer text-center">Entwurf speichern</button>
-                  <button onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('sendW'); }} className="w-full sm:flex-1 bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center">Bericht abgeben</button>
+                  {reportStatus === 'signed' ? (
+                    <>
+                      <div className="w-full sm:flex-1 flex items-center justify-center gap-2 bg-emerald-50 text-emerald-700 border border-emerald-100 p-4 rounded-2xl font-bold text-center">
+                        <Lock className="w-4 h-4" /> Abgegeben und gesperrt
+                      </div>
+                      <button onClick={() => handleSaveReport('wochenbericht')} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Als PDF</button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={handleResetWeeklyReport} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Woche leeren</button>
+                      <button onClick={() => handleSaveReport('wochenbericht')} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Als PDF</button>
+                      <button onClick={() => persistWeek()} className="w-full sm:flex-1 bg-brand-accent2 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent2/90 transition-colors cursor-pointer text-center">Entwurf speichern</button>
+                      <button onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('sendW'); }} className="w-full sm:flex-1 bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center">Bericht abgeben</button>
+                    </>
+                  )}
                 </div>
               </motion.div>
             )}

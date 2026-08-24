@@ -27,6 +27,7 @@ import {
   moveTradeEntry,
   renameTradeRow,
   saveWeekNote,
+  updateTradeEntry,
   type AssignmentRow,
 } from '../../lib/data.ts';
 import {
@@ -35,6 +36,7 @@ import {
   deleteAssignment,
   fetchImportedAssignmentIds,
   moveAssignment,
+  updateAssignment,
   updateAssignmentNote,
 } from '../../lib/planning.ts';
 import { WEEKDAYS, breakMinutesForDate, defaultShiftFor, weekdayOf } from '../../lib/hours.ts';
@@ -85,6 +87,10 @@ export default function WeekGrid({
   const [tradeRows, setTradeRows] = useState<TradeRow[]>([]);
   const [tradeEntries, setTradeEntries] = useState<TradeEntryRow[]>([]);
   const [tradeEditing, setTradeEditing] = useState<{ rowId: string; date: string } | null>(null);
+  // Id des Einsatzes bzw. Gewerk-Eintrags, der gerade zum Ändern offen ist.
+  // Die Kachel wird dann durch ihr vorbelegtes Formular ersetzt.
+  const [editAssignmentId, setEditAssignmentId] = useState<string | null>(null);
+  const [editTradeId, setEditTradeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ employeeId: string; date: string } | null>(null);
@@ -133,6 +139,8 @@ export default function WeekGrid({
     load();
     setEditing(null);
     setTradeEditing(null);
+    setEditAssignmentId(null);
+    setEditTradeId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekStart]);
 
@@ -497,7 +505,22 @@ export default function WeekGrid({
                       }`}
                     >
                       <div className="space-y-1">
-                        {cell.map((a) => (
+                        {cell.map((a) =>
+                          editAssignmentId === a.id ? (
+                            <AssignmentForm
+                              key={a.id}
+                              sites={sites}
+                              employeeId={a.employee_id}
+                              date={a.date}
+                              edit={a}
+                              onCancel={() => setEditAssignmentId(null)}
+                              onSaved={async () => {
+                                setEditAssignmentId(null);
+                                await load();
+                              }}
+                              onError={setError}
+                            />
+                          ) : (
                           <AssignmentTile
                             key={a.id}
                             assignment={a}
@@ -517,9 +540,11 @@ export default function WeekGrid({
                             }}
                             onDelete={() => remove(a)}
                             onDuplicate={() => duplicate(a)}
+                            onEdit={() => setEditAssignmentId(a.id)}
                             onNote={(note) => run(() => updateAssignmentNote(a.id, note))}
                           />
-                        ))}
+                          ),
+                        )}
 
                         {!readOnly &&
                           (isEditing ? (
@@ -603,11 +628,24 @@ export default function WeekGrid({
                     }`}
                   >
                     <div className="space-y-1">
-                      {cell.map((entry) => (
+                      {cell.map((entry) =>
+                        editTradeId === entry.id ? (
+                          <TradeEntryForm
+                            key={entry.id}
+                            sites={sites}
+                            edit={entry}
+                            onCancel={() => setEditTradeId(null)}
+                            onSave={async (siteId, note) => {
+                              setEditTradeId(null);
+                              await run(() => updateTradeEntry(entry.id, { site_id: siteId, note }));
+                            }}
+                          />
+                        ) : (
                         <TradeTile
                           key={entry.id}
                           entry={entry}
                           readOnly={readOnly}
+                          onEdit={() => setEditTradeId(entry.id)}
                           onDragMove={(x, y) => {
                             const target = tradeCellAt(x, y);
                             setDropTarget(target ? `${target.rowId}|${target.date}` : null);
@@ -639,7 +677,8 @@ export default function WeekGrid({
                             )
                           }
                         />
-                      ))}
+                        ),
+                      )}
 
                       {!readOnly &&
                         (isEditing ? (
@@ -714,6 +753,7 @@ function AssignmentTile({
   onDragEnd,
   onDelete,
   onDuplicate,
+  onEdit,
   onNote,
 }: {
   assignment: AssignmentRow;
@@ -725,6 +765,7 @@ function AssignmentTile({
   onDragEnd: (x: number, y: number) => void;
   onDelete: () => void;
   onDuplicate: () => void;
+  onEdit: () => void;
   onNote: (note: string | null) => void;
 }) {
   /** `null` = nicht in Bearbeitung; ein String ist der laufende Entwurf. */
@@ -824,6 +865,15 @@ function AssignmentTile({
       <div className="flex items-center gap-1 mt-1">
         <button
           onPointerDownCapture={(e) => e.stopPropagation()}
+          onClick={onEdit}
+          className="p-1 rounded-md text-[#141414]/40 hover:text-brand-accent1 hover:bg-white/70 cursor-pointer"
+          title="Einsatz bearbeiten"
+          aria-label="Einsatz bearbeiten"
+        >
+          <Pencil size={12} />
+        </button>
+        <button
+          onPointerDownCapture={(e) => e.stopPropagation()}
           onClick={() => setDraft(assignment.note ?? '')}
           className={`p-1 rounded-md hover:bg-white/70 cursor-pointer ${
             assignment.note ? 'text-brand-accent1' : 'text-[#141414]/40 hover:text-brand-accent1'
@@ -865,6 +915,7 @@ function AssignmentTile({
 function TradeTile({
   entry,
   readOnly,
+  onEdit,
   onDragMove,
   onDragEnd,
   onDelete,
@@ -872,6 +923,7 @@ function TradeTile({
 }: {
   entry: TradeEntryRow;
   readOnly: boolean;
+  onEdit: () => void;
   onDragMove: (x: number, y: number) => void;
   onDragEnd: (x: number, y: number) => void;
   onDelete: () => void;
@@ -909,6 +961,15 @@ function TradeTile({
       <div className="flex items-center gap-1 mt-1">
         <button
           onPointerDownCapture={(e) => e.stopPropagation()}
+          onClick={onEdit}
+          className="p-1 rounded-md text-[#141414]/40 hover:text-[#141414] hover:bg-white/70 cursor-pointer"
+          title="Eintrag bearbeiten"
+          aria-label="Eintrag bearbeiten"
+        >
+          <Pencil size={12} />
+        </button>
+        <button
+          onPointerDownCapture={(e) => e.stopPropagation()}
           onClick={onDuplicate}
           className="p-1 rounded-md text-[#141414]/40 hover:text-[#141414] hover:bg-white/70 cursor-pointer"
           title="Eintrag duplizieren"
@@ -933,15 +994,20 @@ function TradeTile({
 /** Baustelle und ein freier Text — Uhrzeiten hat ein Fremdgewerk nicht. */
 function TradeEntryForm({
   sites,
+  edit,
   onCancel,
   onSave,
 }: {
   sites: Site[];
+  /** Gesetzt, wenn ein bestehender Gewerk-Eintrag geändert wird. */
+  edit?: TradeEntryRow;
   onCancel: () => void;
   onSave: (siteId: string, note: string | null) => Promise<void>;
 }) {
-  const [siteId, setSiteId] = useState(sites.find((s) => !s.is_absence_code)?.id ?? '');
-  const [note, setNote] = useState('');
+  const [siteId, setSiteId] = useState(
+    edit?.site_id ?? sites.find((s) => !s.is_absence_code)?.id ?? '',
+  );
+  const [note, setNote] = useState(edit?.note ?? '');
   const [busy, setBusy] = useState(false);
 
   return (
@@ -1001,6 +1067,7 @@ function AssignmentForm({
   sites,
   employeeId,
   date,
+  edit,
   onCancel,
   onSaved,
   onError,
@@ -1008,6 +1075,8 @@ function AssignmentForm({
   sites: Site[];
   employeeId: string;
   date: string;
+  /** Gesetzt, wenn ein bestehender Einsatz geändert wird statt einen neuen anzulegen. */
+  edit?: AssignmentRow;
   onCancel: () => void;
   onSaved: () => Promise<void>;
   onError: (message: string) => void;
@@ -1015,10 +1084,12 @@ function AssignmentForm({
   const day = new Date(`${date}T00:00:00`);
   const shift = defaultShiftFor(weekdayOf(day));
 
-  const [siteId, setSiteId] = useState(sites.find((s) => !s.is_absence_code)?.id ?? '');
-  const [start, setStart] = useState(shift.start);
-  const [end, setEnd] = useState(shift.end);
-  const [note, setNote] = useState('');
+  const [siteId, setSiteId] = useState(
+    edit?.site_id ?? sites.find((s) => !s.is_absence_code)?.id ?? '',
+  );
+  const [start, setStart] = useState(edit ? edit.start_time.slice(0, 5) : shift.start);
+  const [end, setEnd] = useState(edit ? edit.end_time.slice(0, 5) : shift.end);
+  const [note, setNote] = useState(edit?.note ?? '');
   const [busy, setBusy] = useState(false);
 
   const pause = breakMinutesForDate(start, end, day);
@@ -1030,17 +1101,27 @@ function AssignmentForm({
     }
     setBusy(true);
     try {
-      await createAssignments([
-        {
-          employee_id: employeeId,
-          site_id: siteId,
+      if (edit) {
+        await updateAssignment(edit.id, {
+          siteId,
           date,
-          start_time: start,
-          end_time: end,
-          break_minutes: pause,
-          note: note.trim() || null,
-        },
-      ]);
+          startTime: start,
+          endTime: end,
+          note,
+        });
+      } else {
+        await createAssignments([
+          {
+            employee_id: employeeId,
+            site_id: siteId,
+            date,
+            start_time: start,
+            end_time: end,
+            break_minutes: pause,
+            note: note.trim() || null,
+          },
+        ]);
+      }
       await onSaved();
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
