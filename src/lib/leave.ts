@@ -22,6 +22,19 @@ export async function approveLeaveRequest(id: string): Promise<number> {
   return (data as number) ?? 0;
 }
 
+/**
+ * Genehmigten Urlaub zurückziehen, wenn umgeplant wird.
+ *
+ * Gelöscht wird nichts: Der Antrag bleibt als abgelehnter Vorgang mit Datum
+ * stehen. Die Datenbankfunktion bucht die Tage zurück und räumt zugleich die
+ * Urlaubszeilen aus noch nicht abgegebenen Wochenberichten — die stünden sonst
+ * an Tagen, an denen wieder gearbeitet wird.
+ */
+export async function withdrawApprovedLeave(id: string): Promise<void> {
+  const { error } = await supabase.rpc('withdraw_leave_request', { p_id: id });
+  if (error) throw new Error(`Urlaub konnte nicht zurückgezogen werden: ${error.message}`);
+}
+
 export async function rejectLeaveRequest(id: string): Promise<void> {
   const { error } = await supabase.rpc('reject_leave_request', { p_id: id });
   if (error) throw new Error(`Antrag konnte nicht abgelehnt werden: ${error.message}`);

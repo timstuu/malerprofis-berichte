@@ -1,8 +1,13 @@
 import { useState } from 'react';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { Check, X, Loader2 } from 'lucide-react';
-import { approveLeaveRequest, countWorkingDays, rejectLeaveRequest } from '../../lib/leave.ts';
+import { Check, X, Loader2, RotateCcw } from 'lucide-react';
+import {
+  approveLeaveRequest,
+  countWorkingDays,
+  rejectLeaveRequest,
+  withdrawApprovedLeave,
+} from '../../lib/leave.ts';
 import type { Employee, Holiday, LeaveRequest } from '../../lib/database.types.ts';
 
 /**
@@ -41,10 +46,62 @@ export default function LeaveAdmin({
     .filter((r) => r.status === 'pending')
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
 
+  /**
+   * Was wann passiert ist. Mehr gibt die Tabelle nicht her: Sie merkt sich nur
+   * die *letzte* Entscheidung. Wird ein genehmigter Urlaub zurückgezogen,
+   * überschreibt dessen Zeitpunkt den der Genehmigung.
+   */
+  const trail = (req: LeaveRequest) => {
+    // created_at ist im Typ optional; ein fehlender Wert würde beim Formatieren
+    // eine Ausnahme werfen und die ganze Liste leeren.
+    const parts: string[] = [];
+    if (req.created_at) {
+      parts.push(
+        `eingereicht ${format(new Date(req.created_at), 'dd.MM.yyyy HH:mm', { locale: de })}`,
+      );
+    }
+    if (req.decided_at) {
+      const who = req.decided_by ? ` von ${nameOf(req.decided_by)}` : '';
+      parts.push(
+        `entschieden ${format(new Date(req.decided_at), 'dd.MM.yyyy HH:mm', { locale: de })}${who}`,
+      );
+    }
+    return parts.join(' · ');
+  };
+
   const decided = leaveRequests
     .filter((r) => r.status !== 'pending')
     .sort((a, b) => b.start_date.localeCompare(a.start_date))
     .slice(0, 15);
+
+  /**
+   * Genehmigten Urlaub zurückziehen, weil umgeplant wird.
+   *
+   * Kein Löschen: Der Antrag bleibt als Vorgang stehen, damit nachvollziehbar
+   * ist, was wann entschieden wurde.
+   */
+  const withdraw = async (request: LeaveRequest) => {
+    if (
+      !confirm(
+        `Urlaub von ${nameOf(request.employee_id)} (` +
+          `${format(new Date(`${request.start_date}T00:00:00`), 'dd.MM.')} – ` +
+          `${format(new Date(`${request.end_date}T00:00:00`), 'dd.MM.yyyy')}) zurückziehen?\n\n` +
+          'Die Urlaubstage kommen aufs Konto zurück.',
+      )
+    ) {
+      return;
+    }
+    setBusyId(request.id);
+    setError(null);
+    try {
+      await withdrawApprovedLeave(request.id);
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const decide = async (request: LeaveRequest, approve: boolean) => {
     setError(null);
@@ -124,6 +181,7 @@ export default function LeaveAdmin({
                     {format(new Date(`${req.end_date}T00:00:00`), 'dd.MM.yyyy', { locale: de })} ·{' '}
                     {days} Tage
                   </p>
+                  <p className="text-[11px] text-[#141414]/40 mt-0.5">{trail(req)}</p>
                   <p className="text-xs text-[#141414]/40 mt-0.5">
                     Resturlaub danach: {(employee?.remaining_leave_days ?? 0) - days} Tage
                     {affected > 0 && (
@@ -183,16 +241,29 @@ export default function LeaveAdmin({
                   {format(new Date(`${req.end_date}T00:00:00`), 'dd.MM.yyyy', { locale: de })} ·{' '}
                   {req.type === 'sick' ? 'Krank' : 'Urlaub'}
                 </p>
+                <p className="text-[11px] text-[#141414]/40 mt-0.5">{trail(req)}</p>
               </div>
-              <span
-                className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase shrink-0 ${
-                  req.status === 'approved'
-                    ? 'bg-emerald-100 text-emerald-700'
-                    : 'bg-red-100 text-red-700'
-                }`}
-              >
-                {req.status === 'approved' ? 'Genehmigt' : 'Abgelehnt'}
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span
+                  className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
+                    req.status === 'approved'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-red-100 text-red-700'
+                  }`}
+                >
+                  {req.status === 'approved' ? 'Genehmigt' : 'Abgelehnt'}
+                </span>
+                {req.status === 'approved' && req.type === 'vacation' && (
+                  <button
+                    onClick={() => withdraw(req)}
+                    disabled={busyId === req.id}
+                    className="flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-xl font-bold disabled:opacity-60 cursor-pointer"
+                    title="Urlaub zurückziehen — die Tage kommen aufs Konto zurück"
+                  >
+                    <RotateCcw size={14} /> Zurückziehen
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           {decided.length === 0 && (

@@ -191,6 +191,17 @@ export default function LeaveView({
                 {req.type === 'sick' ? 'Krankmeldung' : 'Urlaub'}
                 {req.days_count > 0 && ` · ${req.days_count} Tage`}
               </p>
+              {/* Der eigene Vorgang: wann eingereicht, wann entschieden. */}
+              <p className="text-[11px] text-[#141414]/40 mt-0.5">
+                {[
+                  req.created_at &&
+                    `eingereicht ${format(new Date(req.created_at), 'dd.MM.yyyy HH:mm', { locale: de })}`,
+                  req.decided_at &&
+                    `entschieden ${format(new Date(req.decided_at), 'dd.MM.yyyy HH:mm', { locale: de })}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
