@@ -868,6 +868,18 @@ export default function App() {
     sigCanvas.current?.clear();
   };
 
+  // Escape schließt das Menü. Ohne das bliebe es am Handy offen stehen, wenn
+  // jemand mit Tastatur arbeitet — und der Fangbereich daneben liegt über der
+  // ganzen Seite.
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsMobileMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isMobileMenuOpen]);
+
   const navItems = [
     { id: 'planung', label: 'Wochenplanung', icon: Calendar },
     { id: 'wochenbericht', label: 'Wochenberichte', icon: Clock },
@@ -879,37 +891,79 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-brand-bg text-[#141414] font-sans">
-      {/* Sidebar / Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#141414]/10 px-6 py-2 md:top-0 md:bottom-auto md:h-screen md:w-64 md:border-t-0 md:border-r flex md:flex-col z-50">
-        <div className="hidden md:flex items-center justify-center py-6 px-4">
+      {/* Seitenleiste — nur am großen Bildschirm. Am Handy führt das
+          Burger-Menü oben rechts durch dieselben Reiter. */}
+      <nav className="hidden md:flex fixed top-0 bottom-auto h-screen w-64 bg-white border-r border-[#141414]/10 px-6 py-2 flex-col z-50">
+        <div className="flex items-center justify-center py-6 px-4">
           <Logo className="w-48 h-auto" />
         </div>
 
-        <div className="flex flex-1 justify-around md:flex-col md:justify-start md:gap-2">
+        <div className="flex flex-1 flex-col justify-start gap-2">
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id as any)}
               className={cn(
-                "flex flex-col md:flex-row items-center gap-1 md:gap-3 p-2 md:px-4 md:py-3 rounded-xl transition-all",
-                activeTab === item.id 
-                  ? "text-brand-accent1 md:bg-brand-accent1/10 font-medium" 
+                "flex flex-row items-center gap-3 px-4 py-3 rounded-xl transition-all",
+                activeTab === item.id
+                  ? "text-brand-accent1 bg-brand-accent1/10 font-medium"
                   : "text-[#141414]/50 hover:text-[#141414]"
               )}
             >
               <item.icon size={20} />
-              <span className="text-[10px] md:text-sm">{item.label}</span>
+              <span className="text-sm">{item.label}</span>
             </button>
           ))}
         </div>
       </nav>
 
       {/* Main Content */}
-      <main className="pb-24 md:pb-0 md:pl-64 min-h-screen">
+      <main className="md:pl-64 min-h-screen">
         <header className="sticky top-0 bg-gray-100/80 backdrop-blur-md z-40 px-6 py-3 flex items-center justify-between md:hidden">
           <Logo className="w-36 h-auto" />
-          <div className="w-8 h-8 bg-[#E4E3E0] rounded-full flex items-center justify-center text-xs font-bold">
-            {currentUser?.first_name[0]}
+
+          {/* Burger-Menü. Das Panel hängt am Kopf und schließt beim Auswählen,
+              bei einem Tipp daneben und mit Escape. */}
+          <div className="relative">
+            <button
+              onClick={() => setIsMobileMenuOpen((open) => !open)}
+              className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/70 border border-[#141414]/10 cursor-pointer"
+              aria-label="Menü"
+              aria-expanded={isMobileMenuOpen}
+            >
+              {isMobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
+
+            {isMobileMenuOpen && (
+              <>
+                {/* Fängt den Tipp daneben ab, ohne die Seite abzudunkeln. */}
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  aria-hidden
+                />
+                <div className="absolute right-0 top-11 z-50 w-56 bg-white rounded-2xl shadow-lg border border-[#141414]/10 p-2">
+                  {navItems.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setActiveTab(item.id as any);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={cn(
+                        'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors',
+                        activeTab === item.id
+                          ? 'text-brand-accent1 bg-brand-accent1/10 font-medium'
+                          : 'text-[#141414]/70 hover:bg-gray-50',
+                      )}
+                    >
+                      <item.icon size={18} />
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </header>
 
