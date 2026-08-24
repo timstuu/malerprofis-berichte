@@ -25,15 +25,25 @@ export interface PrefillResult {
  * Feiertage. Läuft automatisch beim Öffnen und ist additiv — vorhandene
  * Eingaben werden nie überschrieben.
  *
- * Zwei unterschiedliche Regeln, bewusst:
+ * Alles wird nur an Tagen ergänzt, die noch **gar keine Zeile** haben. Was der
+ * Maler selbst einträgt, ist die Wahrheit über seinen Tag; die Planung ist nur
+ * ein Vorschlag von vorher und schiebt sich nicht daneben.
+ *
+ * Ob ein Tag leer ist, wird **einmal zu Beginn** festgestellt und nicht während
+ * des Einfügens: Sonst würde die erste Baustelle eines Tages die zweite
+ * verdrängen, obwohl beide geplant sind.
+ *
+ * Darin unterscheiden sich die Quellen nur noch im Gedächtnis:
  *
  * - **Einsätze** merken sich pro Zeile, ob sie übernommen oder gelöscht wurden
  *   (`assignment_imports`). Eine einmal verworfene Planzeile kommt nie wieder,
- *   auch wenn der Maler die App zehnmal am Tag öffnet.
+ *   auch wenn der Maler die App zehnmal am Tag öffnet. Eine wegen eines vollen
+ *   Tages *übersprungene* Zeile wird dagegen **nicht** vermerkt — räumt der
+ *   Maler den Tag leer, kommt sie doch noch. So verschwindet nichts
+ *   stillschweigend, wenn das Büro nachträglich umplant.
  * - **Urlaub, Feiertage und Büro-Standardzeiten** haben keine Planzeile, an der
- *   ein solcher Vermerk hängen könnte. Sie werden deshalb nur an Tagen ergänzt,
- *   die noch gar keine Zeile haben. Wer an einem Urlaubstag doch gearbeitet hat
- *   und das einträgt, bekommt keine Urlaubszeile mehr dazu — und eine gelöschte
+ *   ein Vermerk hängen könnte. Wer an einem Urlaubstag doch gearbeitet hat und
+ *   das einträgt, bekommt keine Urlaubszeile mehr dazu — und eine gelöschte
  *   Bürozeile kommt beim nächsten Öffnen der Woche wieder.
  *
  * Die Rangfolge ergibt sich aus der Reihenfolge der Abschnitte: Ein geplanter
@@ -63,6 +73,10 @@ export function buildPrefill(
   const importedAssignmentIds: string[] = [];
   let addedCount = 0;
 
+  // Welche Tage waren beim Öffnen leer? Muss vor dem ersten Einfügen feststehen,
+  // sonst verdrängt die erste Zeile eines Tages jede weitere.
+  const wasEmpty = new Set(WEEKDAYS.filter((day) => entries[day].entries.length === 0));
+
   const siteById = new Map(sites.map((s) => [s.id, s]));
   const siteByNumber = new Map(sites.map((s) => [s.number, s]));
   const holidayByDate = new Map(holidays.map((h) => [h.date, h]));
@@ -74,6 +88,11 @@ export function buildPrefill(
 
     const dayIndex = WEEKDAYS.findIndex((_, i) => dateOfWeekday(weekStart, i) === assignment.date);
     if (dayIndex < 0) continue;
+
+    // Der Tag hatte schon etwas: Der Maler hat für diesen Tag selbst gesprochen.
+    // Bewusst ohne Vermerk — die Zeile bleibt offen und kommt wieder, falls der
+    // Tag später leer ist.
+    if (!wasEmpty.has(WEEKDAYS[dayIndex])) continue;
 
     const site = siteById.get(assignment.site_id);
     const start = assignment.start_time.slice(0, 5);

@@ -74,13 +74,44 @@ function check(name: string, actual: unknown, expected: unknown) {
   check('fremder Einsatz wird ignoriert', r.entries.Montag.entries.length, 0);
 }
 
-// 4. Ausgefüllter Tag wird nicht überschrieben, zusätzliche Planzeile kommt dazu
+// 4. Ein Tag, an dem schon etwas steht, bekommt keine Planzeile mehr
 {
   const base = emptyWeek();
   base.Montag.entries.push({ id: 'eigen', project: 'Eigene Baustelle', projectNumber: '999-7', description: 'von Hand', hours: 4 });
   const r = buildPrefill(MONDAY, base, [assignment('a2', '2026-08-17')], new Set(), [], [], sites, ME);
   check('eigene Zeile bleibt erhalten', r.entries.Montag.entries[0]?.description, 'von Hand');
-  check('zweiter Einsatz kommt dazu', r.entries.Montag.entries.length, 2);
+  check('Planzeile bleibt weg', r.entries.Montag.entries.length, 1);
+  // Nicht als erledigt melden: Räumt der Maler den Tag leer, muss sie wiederkommen.
+  check('übersprungene Zeile bleibt offen', r.importedAssignmentIds, []);
+  check('nichts hinzugefügt', r.addedCount, 0);
+}
+
+// 4b. Zwei Baustellen an einem leeren Tag kommen beide — die erste darf die
+//     zweite nicht verdrängen.
+{
+  const r = buildPrefill(
+    MONDAY,
+    emptyWeek(),
+    [assignment('a3', '2026-08-17'), assignment('a4', '2026-08-17')],
+    new Set(), [], [], sites, ME,
+  );
+  check('beide Einsätze des Tages', r.entries.Montag.entries.length, 2);
+  check('beide zum Vermerken gemeldet', r.importedAssignmentIds, ['a3', 'a4']);
+}
+
+// 4c. Der volle Tag sperrt nur sich selbst, nicht die übrige Woche.
+{
+  const base = emptyWeek();
+  base.Montag.entries.push({ id: 'eigen', project: 'Eigene Baustelle', projectNumber: '999-7', description: 'von Hand', hours: 4 });
+  const r = buildPrefill(
+    MONDAY,
+    base,
+    [assignment('a5', '2026-08-17'), assignment('a6', '2026-08-18')],
+    new Set(), [], [], sites, ME,
+  );
+  check('Montag bleibt bei der eigenen Zeile', r.entries.Montag.entries.length, 1);
+  check('Dienstag wird übernommen', r.entries.Dienstag.entries.length, 1);
+  check('nur der Dienstag gemeldet', r.importedAssignmentIds, ['a6']);
 }
 
 // 5. Genehmigter Urlaub füllt leere Tage mit Soll-Stunden (Mo-Do 8,5 / Fr 6,0)
