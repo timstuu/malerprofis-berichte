@@ -13,6 +13,7 @@ import {
   Check,
   Wrench,
   StickyNote,
+  Maximize2,
 } from 'lucide-react';
 import {
   copyTradeRowsToWeek,
@@ -44,6 +45,7 @@ import {
 import { WEEKDAYS, breakMinutesForDate, defaultShiftFor, weekdayOf } from '../../lib/hours.ts';
 import { sortEmployees } from '../../lib/users.ts';
 import { colorOf } from '../../lib/colors.ts';
+import FullscreenPlan from './FullscreenPlan.tsx';
 import type {
   Employee,
   Holiday,
@@ -107,6 +109,8 @@ export default function WeekGrid({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ employeeId: string; date: string } | null>(null);
+  /** Bildschirmfüllende Ansicht des Plans — nur zum Ansehen. */
+  const [fullscreen, setFullscreen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -379,8 +383,28 @@ export default function WeekGrid({
 
   const gridTemplate = `10rem repeat(${DAY_COUNT}, minmax(8.5rem, 1fr))`;
 
+  const weekLabel = `KW ${format(weekStart, 'I', { locale: de })} · ${format(weekStart, 'dd.MM.')} – ${format(weekEnd, 'dd.MM.yyyy')}`;
+
   return (
     <div className="space-y-4">
+      {fullscreen && (
+        <FullscreenPlan
+          days={days}
+          dayCount={DAY_COUNT}
+          workers={workers}
+          tradeRows={tradeRows}
+          weekLabel={weekLabel}
+          hasNotes={hasNotes}
+          noteOn={noteOn}
+          cellAssignments={cellAssignments}
+          cellAbsences={cellAbsences}
+          tradeCell={tradeCell}
+          onPrev={() => setWeekStart(subWeeks(weekStart, 1))}
+          onNext={() => setWeekStart(addWeeks(weekStart, 1))}
+          onClose={() => setFullscreen(false)}
+        />
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <button
@@ -400,6 +424,14 @@ export default function WeekGrid({
             aria-label="Nächste Woche"
           >
             <ChevronRight size={18} />
+          </button>
+          <button
+            onClick={() => setFullscreen(true)}
+            className="p-2 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer"
+            aria-label="Wochenplan im Vollbild anzeigen"
+            title="Vollbild"
+          >
+            <Maximize2 size={18} />
           </button>
           {loading && <Loader2 size={16} className="animate-spin text-brand-accent1" />}
         </div>
