@@ -26,10 +26,7 @@ import {
   Menu,
   X,
   LogOut,
-  FileText,
-  Send,
   Trash2,
-  Download,
   Pencil,
   Edit3,
   RotateCcw,
@@ -44,7 +41,6 @@ import { de } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import Logo from './components/Logo.tsx';
 import AdminPanel from './features/admin/AdminPanel.tsx';
 import WeekGrid from './features/planning/WeekGrid.tsx';
@@ -370,7 +366,7 @@ export default function App() {
   };
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
-  const [signatureAction, setSignatureAction] = useState<'saveW' | 'sendW' | 'saveA' | 'sendA' | null>(null);
+  const [signatureAction, setSignatureAction] = useState<'sendW' | 'saveA' | 'sendA' | null>(null);
   const sigCanvas = React.useRef<SignatureCanvas>(null);
 
   // Stammdaten und eigene Daten laden. Fehler werden angezeigt statt
@@ -645,7 +641,9 @@ export default function App() {
     return () => window.removeEventListener('online', onOnline);
   }, [saveState, persistWeek]);
 
-  const generatePDFBlob = async (type: 'wochenbericht' | 'abnahme', signatures: { employee?: string, customer?: string }) => {
+  // Nur noch das Abnahmeprotokoll wird auf dem Gerät zum PDF. Der
+  // Wochenbericht geht als Daten ans Büro und wird dort gedruckt.
+  const generatePDFBlob = async (signatures: { employee?: string, customer?: string }) => {
     const doc = new jsPDF();
     
     // Header
@@ -686,175 +684,114 @@ export default function App() {
     }
     
     doc.setFontSize(16);
-    doc.text(type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll', 20, 40);
+    doc.text('Abnahmeprotokoll', 20, 40);
     doc.setFontSize(12);
     doc.text(`Mitarbeiter: ${userName.firstName} ${userName.lastName}`, 20, 50);
     
     let currentY = 60;
     
-    if (type === 'wochenbericht') {
-        const germanDayToOffset: { [key: string]: number } = {
-          Montag: 0,
-          Dienstag: 1,
-          Mittwoch: 2,
-          Donnerstag: 3,
-          Freitag: 4,
-          Samstag: 5,
-          Sonntag: 6,
-        };
-        const tableData = Object.entries(weeklyEntries).flatMap(([day, data]) => {
-          const offset = germanDayToOffset[day] ?? 0;
-          const entryDate = format(addDays(selectedWeek, offset), 'dd.MM.yyyy');
-          return data.entries.map(e => [
-            entryDate, 
-            e.projectNumber || '-', 
-            e.project, 
-            e.description || '-', 
-            e.startTime || '-', 
-            e.endTime || '-', 
-            e.pause !== undefined ? `${e.pause} Min.` : '-', 
-            `${e.hours} h`
-          ]);
-        });
-        autoTable(doc, {
-          startY: currentY,
-          head: [['Datum', 'Nr.', 'Baustelle', 'Beschreibung', 'Startzeit', 'Endzeit', 'Pause', 'Std.']],
-          body: tableData,
-        });
-        currentY = (doc as any).lastAutoTable.finalY + 20;
-        
-        // Signature area
-        doc.text(`Datum: ${format(new Date(), 'dd.MM.yyyy')}`, 20, currentY);
-        doc.text("Unterschrift Mitarbeiter:", 20, currentY + 10);
-        if (signatures.employee) {
-            doc.addImage(signatures.employee, 'PNG', 20, currentY + 15, 50, 20);
-        }
-    } else {
-        doc.text(`Baustelle / Adresse: ${abnahme.address}`, 20, currentY);
-        doc.text(`Baustellennummer: ${abnahme.number}`, 20, currentY + 10);
-        doc.text(`Teilnehmer: ${abnahme.participants.join(', ')}`, 20, currentY + 20);
-        doc.text(`Art der Abnahme: ${abnahme.type === 'teil' ? 'Teilabnahme' : 'Gesamtabnahme'}`, 20, currentY + 30);
-        doc.text(`Status: ${abnahme.status === 'ohne' ? 'Ohne sichtbare Mängel' : 'Mit Mängeln/Restarbeiten'}`, 20, currentY + 40);
-        
-        currentY += 50;
-        if (abnahme.status === 'mit' && abnahme.tasks && abnahme.tasks.length > 0) {
-          doc.text(`Mängel/Kommentar:`, 20, currentY);
-          currentY += 10;
-          
-          abnahme.tasks.forEach((task) => {
-            // Check if text would overflow
-            if (currentY > 275) {
-              doc.addPage();
-              currentY = 20;
-            }
-            doc.text(`- ${task.text}`, 25, currentY);
-            currentY += 7;
-            
-            if (task.photo) {
-              // Check if image would overflow (needs 37.5mm + margin)
-              if (currentY > 230) {
-                doc.addPage();
-                currentY = 20;
-              }
-              try {
-                let formatType = 'JPEG';
-                if (task.photo.includes('image/png')) {
-                  formatType = 'PNG';
-                }
-                doc.addImage(task.photo, formatType, 25, currentY, 50, 37.5);
-                currentY += 42;
-              } catch (e) {
-                console.error("Error drawing photo in PDF:", e);
-                doc.text("[Fehler beim Laden des Fotos]", 25, currentY);
-                currentY += 7;
-              }
-            }
-          });
-          currentY += 5;
-        }
-        
-        // Signature area
-        if (currentY > 240) {
+    doc.text(`Baustelle / Adresse: ${abnahme.address}`, 20, currentY);
+    doc.text(`Baustellennummer: ${abnahme.number}`, 20, currentY + 10);
+    doc.text(`Teilnehmer: ${abnahme.participants.join(', ')}`, 20, currentY + 20);
+    doc.text(`Art der Abnahme: ${abnahme.type === 'teil' ? 'Teilabnahme' : 'Gesamtabnahme'}`, 20, currentY + 30);
+    doc.text(`Status: ${abnahme.status === 'ohne' ? 'Ohne sichtbare Mängel' : 'Mit Mängeln/Restarbeiten'}`, 20, currentY + 40);
+
+    currentY += 50;
+    if (abnahme.status === 'mit' && abnahme.tasks && abnahme.tasks.length > 0) {
+      doc.text(`Mängel/Kommentar:`, 20, currentY);
+      currentY += 10;
+
+      abnahme.tasks.forEach((task) => {
+        // Check if text would overflow
+        if (currentY > 275) {
           doc.addPage();
           currentY = 20;
         }
-        
-        doc.text(`Datum: ${format(new Date(), 'dd.MM.yyyy')}`, 20, currentY);
-        doc.text("Unterschrift Mitarbeiter:", 20, currentY + 10);
-        if (signatures.employee) {
-            doc.addImage(signatures.employee, 'PNG', 20, currentY + 15, 50, 20);
+        doc.text(`- ${task.text}`, 25, currentY);
+        currentY += 7;
+
+        if (task.photo) {
+          // Check if image would overflow (needs 37.5mm + margin)
+          if (currentY > 230) {
+            doc.addPage();
+            currentY = 20;
+          }
+          try {
+            let formatType = 'JPEG';
+            if (task.photo.includes('image/png')) {
+              formatType = 'PNG';
+            }
+            doc.addImage(task.photo, formatType, 25, currentY, 50, 37.5);
+            currentY += 42;
+          } catch (e) {
+            console.error("Error drawing photo in PDF:", e);
+            doc.text("[Fehler beim Laden des Fotos]", 25, currentY);
+            currentY += 7;
+          }
         }
-        
-        doc.text(`Datum: ${format(new Date(), 'dd.MM.yyyy')}`, 120, currentY);
-        doc.text("Unterschrift Kunde:", 120, currentY + 10);
-        if (signatures.customer) {
-            doc.addImage(signatures.customer, 'PNG', 120, currentY + 15, 50, 20);
-        }
+      });
+      currentY += 5;
     }
-    
+
+    // Signature area
+    if (currentY > 240) {
+      doc.addPage();
+      currentY = 20;
+    }
+
+    doc.text(`Datum: ${format(new Date(), 'dd.MM.yyyy')}`, 20, currentY);
+    doc.text("Unterschrift Mitarbeiter:", 20, currentY + 10);
+    if (signatures.employee) {
+        doc.addImage(signatures.employee, 'PNG', 20, currentY + 15, 50, 20);
+    }
+
+    doc.text(`Datum: ${format(new Date(), 'dd.MM.yyyy')}`, 120, currentY);
+    doc.text("Unterschrift Kunde:", 120, currentY + 10);
+    if (signatures.customer) {
+        doc.addImage(signatures.customer, 'PNG', 120, currentY + 15, 50, 20);
+    }
+
     return doc.output('blob');
   };
 
-  const handleSaveReport = async (type: 'wochenbericht' | 'abnahme', customSignatures?: { employee?: string, customer?: string }) => {
+  const handleSaveReport = async (customSignatures?: { employee?: string, customer?: string }) => {
     if (!userName.firstName || !userName.lastName) {
       alert("Bitte geben Sie zuerst Ihren Namen in den Einstellungen ein.");
       return;
     }
-    let signatures: { employee?: string, customer?: string } = {};
-    if (type === 'wochenbericht') {
-        if (sigCanvas.current && !sigCanvas.current.isEmpty()) {
-            signatures.employee = sigCanvas.current.getCanvas().toDataURL('image/png');
-        }
-    } else {
-        signatures.employee = customSignatures?.employee || abnahme.employeeSignature;
-        signatures.customer = customSignatures?.customer || abnahme.customerSignature;
-    }
+    const signatures = {
+      employee: customSignatures?.employee || abnahme.employeeSignature,
+      customer: customSignatures?.customer || abnahme.customerSignature,
+    };
 
-    const blob = await generatePDFBlob(type, signatures);
+    const blob = await generatePDFBlob(signatures);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll'}.pdf`;
+    a.download = 'Abnahmeprotokoll.pdf';
     a.click();
     URL.revokeObjectURL(url);
-    addReportToHistory(
-      type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll', 
-      'gespeichert',
-      type === 'wochenbericht' 
-        ? `${format(selectedWeek, 'dd.MM.')} - ${format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}`
-        : abnahme.number
-    );
+    addReportToHistory('Abnahmeprotokoll', 'gespeichert', abnahme.number);
   };
 
-  const handleSendReport = async (type: 'wochenbericht' | 'abnahme', customSignatures?: { employee?: string, customer?: string }) => {
+  const handleSendReport = async (customSignatures?: { employee?: string, customer?: string }) => {
     if (!userName.firstName || !userName.lastName) {
       alert("Bitte geben Sie zuerst Ihren Namen in den Einstellungen ein.");
       return;
     }
-    let signatures: { employee?: string, customer?: string } = {};
-    if (type === 'wochenbericht') {
-        if (sigCanvas.current && !sigCanvas.current.isEmpty()) {
-            signatures.employee = sigCanvas.current.getCanvas().toDataURL('image/png');
-        }
-    } else {
-        signatures.employee = customSignatures?.employee || abnahme.employeeSignature;
-        signatures.customer = customSignatures?.customer || abnahme.customerSignature;
-    }
+    const signatures = {
+      employee: customSignatures?.employee || abnahme.employeeSignature,
+      customer: customSignatures?.customer || abnahme.customerSignature,
+    };
 
-    const blob = await generatePDFBlob(type, signatures);
+    const blob = await generatePDFBlob(signatures);
     const reader = new FileReader();
     reader.readAsDataURL(blob);
     reader.onloadend = () => {
       const base64data = reader.result;
-      window.location.href = `mailto:?subject=${type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll'}&body=Anbei der Bericht.&attachment=${base64data}`;
+      window.location.href = `mailto:?subject=Abnahmeprotokoll&body=Anbei der Bericht.&attachment=${base64data}`;
     };
-    addReportToHistory(
-      type === 'wochenbericht' ? 'Wochenbericht' : 'Abnahmeprotokoll', 
-      'versendet',
-      type === 'wochenbericht' 
-        ? `${format(selectedWeek, 'dd.MM.')} - ${format(addDays(selectedWeek, 6), 'dd.MM.yyyy')}`
-        : abnahme.number
-    );
+    addReportToHistory('Abnahmeprotokoll', 'versendet', abnahme.number);
   };
 
   const handleResetWeeklyReport = () => {
@@ -904,9 +841,9 @@ export default function App() {
             setAbnahme(prev => ({...prev, customerSignature: custSig}));
             
             if (signatureAction === 'saveA') {
-              handleSaveReport('abnahme', { employee: empSig, customer: custSig });
+              handleSaveReport({ employee: empSig, customer: custSig });
             } else {
-              handleSendReport('abnahme', { employee: empSig, customer: custSig });
+              handleSendReport({ employee: empSig, customer: custSig });
             }
             
             setAbnahme(prev => ({...prev, employeeSignature: undefined, customerSignature: undefined})); // Reset signatures
@@ -1604,16 +1541,12 @@ export default function App() {
                 </div>
                 <div className="flex flex-col sm:flex-row gap-3 pt-6 w-full">
                   {reportStatus === 'signed' ? (
-                    <>
-                      <div className="w-full sm:flex-1 flex items-center justify-center gap-2 bg-emerald-50 text-emerald-700 border border-emerald-100 p-4 rounded-2xl font-bold text-center">
-                        <Lock className="w-4 h-4" /> Abgegeben und gesperrt
-                      </div>
-                      <button onClick={() => handleSaveReport('wochenbericht')} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Als PDF</button>
-                    </>
+                    <div className="w-full flex items-center justify-center gap-2 bg-emerald-50 text-emerald-700 border border-emerald-100 p-4 rounded-2xl font-bold text-center">
+                      <Lock className="w-4 h-4" /> Abgegeben und gesperrt
+                    </div>
                   ) : (
                     <>
                       <button onClick={handleResetWeeklyReport} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Woche leeren</button>
-                      <button onClick={() => handleSaveReport('wochenbericht')} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Als PDF</button>
                       <button onClick={() => persistWeek()} className="w-full sm:flex-1 bg-brand-accent2 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent2/90 transition-colors cursor-pointer text-center">Entwurf speichern</button>
                       <button onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('sendW'); }} className="w-full sm:flex-1 bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center">Bericht abgeben</button>
                     </>
