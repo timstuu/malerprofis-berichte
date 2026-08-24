@@ -524,8 +524,13 @@ export default function WeekGrid({
                     style={{ backgroundColor: color.swatch }}
                   />
                   <div className="min-w-0">
-                    <p className="font-semibold text-sm truncate">
-                      {employee.first_name} {employee.last_name}
+                    {/* Vor- und Nachname untereinander: In der schmalen
+                        Namensspalte wurde sonst jeder längere Name abgeschnitten. */}
+                    <p className="font-semibold text-sm leading-tight truncate">
+                      {employee.first_name}
+                    </p>
+                    <p className="font-semibold text-sm leading-tight truncate">
+                      {employee.last_name}
                     </p>
                     {employee.role === 'admin' && (
                       <span className="text-[10px] font-bold uppercase text-gray-400">Büro</span>
@@ -1206,18 +1211,20 @@ function AssignmentForm({
         ))}
       </select>
 
-      <div className="flex gap-1">
+      {/* Am Handy untereinander — nebeneinander überlappen die beiden
+          Zeitfelder in der schmalen Kachel. */}
+      <div className="flex flex-col sm:flex-row gap-1">
         <input
           type="time"
           value={start}
           onChange={(e) => setStart(e.target.value)}
-          className="w-1/2 text-[11px] p-1.5 bg-white border border-gray-200 rounded-lg"
+          className="w-full sm:w-1/2 text-[11px] p-1.5 bg-white border border-gray-200 rounded-lg"
         />
         <input
           type="time"
           value={end}
           onChange={(e) => setEnd(e.target.value)}
-          className="w-1/2 text-[11px] p-1.5 bg-white border border-gray-200 rounded-lg"
+          className="w-full sm:w-1/2 text-[11px] p-1.5 bg-white border border-gray-200 rounded-lg"
         />
       </div>
 

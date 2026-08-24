@@ -194,7 +194,7 @@ function ReportEntryEditor({
         className="w-full p-2.5 bg-gray-100 rounded-xl border-none h-16 text-sm"
       />
 
-      <div className="flex gap-2">
+      <div className="flex flex-col sm:flex-row gap-2">
         <div className="flex-1">
           <label className="text-[11px] font-semibold text-[#141414]/40 uppercase tracking-wider block mb-1">Startzeit</label>
           <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="w-full p-2.5 bg-gray-100 rounded-xl border-none text-sm outline-none" />
@@ -1172,7 +1172,7 @@ export default function App() {
 
                         <textarea id={`desc-${day}`} placeholder={isAdmin ? 'Tätigkeitsbeschreibung' : 'Tätigkeitsbeschreibung *'} className="w-full p-3 bg-gray-100 rounded-xl border-none h-20 text-sm" />
                         
-                        <div className="flex gap-2">
+                        <div className="flex flex-col sm:flex-row gap-2">
                           <div className="flex-1">
                             <label className="text-[11px] font-semibold text-[#141414]/40 uppercase tracking-wider block mb-1">Startzeit</label>
                             <input type="time" id={`start-${day}`} className="w-full p-3 bg-gray-100 rounded-xl border-none text-sm outline-none" />
