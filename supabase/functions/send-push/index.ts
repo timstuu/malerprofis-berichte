@@ -45,7 +45,8 @@ interface LeaveRequestRow {
 interface PlanChangeRow {
   id: string;
   week_start: string;
-  employee_ids: string[];
+  /** Je nach Serialisierung eine Liste oder ein Postgres-Array als Text. */
+  employee_ids: string[] | string | null;
 }
 
 interface WebhookPayload {
@@ -169,6 +170,27 @@ async function planLeaveNotifications(payload: WebhookPayload): Promise<Plan[]> 
 // ---------------------------------------------------------------------------
 
 /**
+ * Die Kennungen aus einer uuid[]-Spalte.
+ *
+ * Der Datenbank-Webhook liefert die Spalte normalerweise als JSON-Liste. Je
+ * nach Postgres-Fassung kommt sie aber als Array-Literal `{a,b}` an — und ein
+ * solcher Text hat eine Länge und sieht damit aus wie eine gefüllte Liste. Die
+ * Empfängersuche liefe dann ins Leere, ohne dass irgendwo ein Fehler entsteht:
+ * genau die Art Ausfall, die niemand bemerkt. Deshalb beide Formen annehmen.
+ */
+function toIdList(value: string[] | string | null | undefined): string[] {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (typeof value === 'string') {
+    return value
+      .replace(/^\{|\}$/g, '')
+      .split(',')
+      .map((part) => part.trim().replace(/^"|"$/g, ''))
+      .filter(Boolean);
+  }
+  return [];
+}
+
+/**
  * Die Kalenderwoche nach ISO 8601.
  *
  * Von Hand gerechnet, weil in dieser Umgebung keine Datumsbibliothek liegt und
@@ -200,13 +222,19 @@ function isoWeek(dateIso: string): number {
 function planChangeNotifications(payload: WebhookPayload): Plan[] {
   if (payload.type !== 'INSERT') return [];
   const record = payload.record as unknown as PlanChangeRow | null;
-  if (!record || !record.employee_ids || record.employee_ids.length === 0) return [];
+  if (!record) return [];
+
+  const employeeIds = toIdList(record.employee_ids);
+  if (employeeIds.length === 0) {
+    console.warn('Planungsrunde ohne Empfänger:', JSON.stringify(record.employee_ids));
+    return [];
+  }
 
   const week = isoWeek(record.week_start);
   return [
     {
       kind: 'plan_changed',
-      employeeIds: record.employee_ids,
+      employeeIds,
       title: 'Planung geändert',
       body: `Die Planung wurde für die KW ${week} geändert.`,
       // Je Woche ein Kennzeichen: Wird dieselbe Woche mehrfach überarbeitet,
@@ -318,18 +346,34 @@ Deno.serve(async (req) => {
   } else if (payload.table === 'plan_change_events') {
     plans = planChangeNotifications(payload);
   } else {
+    console.log(`Tabelle ${payload.table} ignoriert.`);
     return new Response(JSON.stringify({ sent: 0, reason: `Tabelle ${payload.table} ignoriert` }), {
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  // Eine Spur durch die ganze Kette. Ohne sie sieht ein Ausfall, bei dem am
+  // Ende schlicht niemand als Empfänger übrig bleibt, genauso aus wie ein
+  // gelungener Versand: Die Funktion antwortet in beiden Fällen freundlich.
+  console.log(`${payload.type} auf ${payload.table}: ${plans.length} Meldung(en) geplant.`);
 
   let sent = 0;
   let removed = 0;
 
   for (const plan of plans) {
     const recipients = await applyPreferences(plan);
-    if (recipients.length === 0) continue;
+    if (recipients.length === 0) {
+      console.log(`[${plan.kind}] kein Empfänger übrig (${plan.employeeIds.length} vor Einstellungen).`);
+      continue;
+    }
     const result = await deliver(plan, recipients);
+    console.log(
+      `[${plan.kind}] ${recipients.length} Empfänger, ${result.sent} Gerät(e) beliefert` +
+        `${result.removed > 0 ? `, ${result.removed} abgemeldet` : ''}.`,
+    );
+    if (result.sent === 0) {
+      console.warn(`[${plan.kind}] Empfänger vorhanden, aber kein angemeldetes Gerät.`);
+    }
     sent += result.sent;
     removed += result.removed;
   }

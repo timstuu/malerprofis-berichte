@@ -14,6 +14,7 @@ import {
   Wrench,
   StickyNote,
   Maximize2,
+  X,
 } from 'lucide-react';
 import {
   copyTradeRowsToWeek,
@@ -122,6 +123,13 @@ export default function WeekGrid({
    * für die gerade sichtbare.
    */
   const pendingChanges = useRef(new Map<string, Set<string>>());
+  /**
+   * Kurze Rückmeldung nach dem Abschluss einer Runde.
+   *
+   * Ohne sie sieht ein gelungener Versand genauso aus wie gar nichts — beides
+   * still. Das Büro soll sehen, dass die Maler Bescheid wissen.
+   */
+  const [handover, setHandover] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
@@ -161,6 +169,7 @@ export default function WeekGrid({
   const finishEditing = async () => {
     setEditing(null);
     setEditMode(false);
+    setHandover(null);
 
     const pending = pendingChanges.current;
     if (pending.size === 0) return;
@@ -171,6 +180,12 @@ export default function WeekGrid({
     try {
       await recordPlanChanges(rows);
       pendingChanges.current = new Map();
+      const betroffene = new Set(rows.flatMap((r) => r.employeeIds)).size;
+      const wochen = rows.length;
+      setHandover(
+        `${betroffene} ${betroffene === 1 ? 'Maler wurde' : 'Maler wurden'} über die geänderte ` +
+          `Planung benachrichtigt${wochen > 1 ? ` (${wochen} Wochen)` : ''}.`,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -534,6 +549,19 @@ export default function WeekGrid({
       {error && (
         <p className="text-sm text-red-600 bg-red-50/60 border border-red-100 rounded-xl p-3">
           {error}
+        </p>
+      )}
+
+      {handover && (
+        <p className="text-sm text-emerald-800 bg-emerald-50/70 border border-emerald-100 rounded-xl p-3 flex items-center justify-between gap-3">
+          {handover}
+          <button
+            onClick={() => setHandover(null)}
+            className="text-emerald-700/60 hover:text-emerald-900 cursor-pointer shrink-0"
+            aria-label="Hinweis schließen"
+          >
+            <X size={16} />
+          </button>
         </p>
       )}
 

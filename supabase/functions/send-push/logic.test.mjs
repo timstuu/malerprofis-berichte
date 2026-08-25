@@ -196,6 +196,38 @@ const handler = await loadHandler();
   }
 }
 
+// 5b. employee_ids als Postgres-Array-Text statt als JSON-Liste
+{
+  const { messages } = await fire(handler, {
+    type: 'INSERT', table: 'plan_change_events',
+    record: { id: 'e-5b', week_start: '2026-08-24', employee_ids: '{maler-1,maler-2}' },
+    old_record: null,
+  });
+  check('Array-Literal wird genauso verstanden wie eine Liste',
+    messages.length === 3, JSON.stringify(messages.map((m) => m.endpoint)));
+  check('Array-Literal liefert denselben Wortlaut',
+    messages[0]?.body === 'Die Planung wurde für die KW 35 geändert.', messages[0]?.body);
+
+  const zitiert = await fire(handler, {
+    type: 'INSERT', table: 'plan_change_events',
+    record: { id: 'e-5c', week_start: '2026-08-24', employee_ids: '{"maler-2"}' },
+    old_record: null,
+  });
+  check('Auch mit Anführungszeichen im Array-Literal',
+    zitiert.messages.length === 1 && zitiert.messages[0].endpoint === 'ep-maler-2',
+    JSON.stringify(zitiert.messages.map((m) => m.endpoint)));
+
+  for (const leer of [null, undefined, '{}', []]) {
+    const r = await fire(handler, {
+      type: 'INSERT', table: 'plan_change_events',
+      record: { id: 'e-leer', week_start: '2026-08-24', employee_ids: leer },
+      old_record: null,
+    });
+    check(`Leere Empfängerangabe (${JSON.stringify(leer)}) bleibt stumm`,
+      r.messages.length === 0, JSON.stringify(r.messages.map((m) => m.body)));
+  }
+}
+
 // 6. Einzelne Einsatzänderung löst nichts mehr aus
 {
   const { messages, body } = await fire(handler, {
