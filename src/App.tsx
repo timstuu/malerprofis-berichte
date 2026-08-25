@@ -54,6 +54,7 @@ import {
   fetchSites,
   loadWeeklyReport,
   saveWeeklyReport,
+  submitAbnahmeProtocol,
   weekKey,
   withdrawLeaveRequest,
   type AssignmentRow,
@@ -61,6 +62,7 @@ import {
   type WeeklyEntry,
 } from './lib/data.ts';
 import { fetchHandledAssignmentIds, markAssignments } from './lib/planning.ts';
+import { flushAbnahmeQueue, pendingAbnahmeCount, queueAbnahme, shrinkPhoto } from './lib/abnahme.ts';
 import DefaultHours from './features/admin/DefaultHours.tsx';
 import { buildPrefill } from './lib/prefill.ts';
 import type { Employee, Holiday, LeaveRequest, Site } from './lib/database.types.ts';
@@ -313,6 +315,8 @@ export default function App() {
   const [newTask, setNewTask] = useState('');
   const [signatureStep, setSignatureStep] = useState<'employee' | 'customer'>('employee');
   const [isAbnahmePreview, setIsAbnahmePreview] = useState(false);
+  /** Abnahmen, die noch auf Netz warten — nur zur Anzeige. */
+  const [pendingAbnahmen, setPendingAbnahmen] = useState(0);
 
   const handleAbnahmeFieldSync = (fieldType: 'number' | 'address', value: string) => {
     const allProjects = sites;
@@ -338,11 +342,16 @@ export default function App() {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       const base64 = e.target?.result as string;
-      const updated = [...abnahme.tasks];
-      updated[index] = { ...updated[index], photo: base64 };
-      setAbnahme(prev => ({ ...prev, tasks: updated }));
+      // Direkt beim Aufnehmen verkleinern. Sonst trägt die PDF das volle
+      // Kamerabild und geht über eine Baustellenverbindung nicht mehr hoch.
+      const small = await shrinkPhoto(base64);
+      setAbnahme(prev => {
+        const updated = [...prev.tasks];
+        updated[index] = { ...updated[index], photo: small };
+        return { ...prev, tasks: updated };
+      });
     };
     reader.readAsDataURL(file);
   };
@@ -363,7 +372,7 @@ export default function App() {
   };
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
-  const [signatureAction, setSignatureAction] = useState<'sendW' | 'saveA' | 'sendA' | null>(null);
+  const [signatureAction, setSignatureAction] = useState<'sendW' | 'saveA' | null>(null);
   const sigCanvas = React.useRef<SignatureCanvas>(null);
 
   // Stammdaten und eigene Daten laden. Fehler werden angezeigt statt
@@ -654,6 +663,28 @@ export default function App() {
     return () => window.removeEventListener('online', onOnline);
   }, [saveState, persistWeek]);
 
+  // Gepufferte Abnahmen nachreichen: einmal beim Start und bei jedem
+  // Netzwechsel. Die PDF liegt schon auf dem Gerät des Malers, hier geht es
+  // nur noch um den Weg ins Büro.
+  useEffect(() => {
+    if (!currentUser) return;
+    let aborted = false;
+    const flush = async () => {
+      if (await pendingAbnahmeCount() === 0) {
+        if (!aborted) setPendingAbnahmen(0);
+        return;
+      }
+      const remaining = await flushAbnahmeQueue();
+      if (!aborted) setPendingAbnahmen(remaining);
+    };
+    flush();
+    window.addEventListener('online', flush);
+    return () => {
+      aborted = true;
+      window.removeEventListener('online', flush);
+    };
+  }, [currentUser]);
+
   // Nur noch das Abnahmeprotokoll wird auf dem Gerät zum PDF. Der
   // Wochenbericht geht als Daten ans Büro und wird dort gedruckt.
   const generatePDFBlob = async (signatures: { employee?: string, customer?: string }) => {
@@ -767,6 +798,15 @@ export default function App() {
     return doc.output('blob');
   };
 
+  /**
+   * Speichert die unterschriebene Abnahme: PDF aufs Gerät, dieselbe Datei ans
+   * Büro.
+   *
+   * Der Download kommt zuerst und ohne Bedingung. Er ist der Teil, auf den
+   * sich der Maler vor Ort verlässt — er darf nicht daran scheitern, dass die
+   * Baustelle kein Netz hat. Die Übertragung wandert dann notfalls in den
+   * Puffer und geht später von allein raus.
+   */
   const handleSaveReport = async (customSignatures?: { employee?: string, customer?: string }) => {
     if (!userName.firstName || !userName.lastName) {
       alert("Bitte geben Sie zuerst Ihren Namen in den Einstellungen ein.");
@@ -785,26 +825,40 @@ export default function App() {
     a.click();
     URL.revokeObjectURL(url);
     addReportToHistory('Abnahmeprotokoll', 'gespeichert', abnahme.number);
-  };
 
-  const handleSendReport = async (customSignatures?: { employee?: string, customer?: string }) => {
-    if (!userName.firstName || !userName.lastName) {
-      alert("Bitte geben Sie zuerst Ihren Namen in den Einstellungen ein.");
+    if (!currentUser) {
+      alert('PDF ist auf dem Gerät gespeichert. Ohne Anmeldung konnte die Abnahme aber nicht ans Büro übertragen werden.');
       return;
     }
-    const signatures = {
-      employee: customSignatures?.employee || abnahme.employeeSignature,
-      customer: customSignatures?.customer || abnahme.customerSignature,
+
+    const input = {
+      siteNumber: abnahme.number,
+      siteAddress: abnahme.address,
+      participants: abnahme.participants,
+      type: abnahme.type,
+      status: abnahme.status,
+      // Nur die Texte. Die Fotos stecken in der PDF, die gerade hochgeht.
+      defects: abnahme.status === 'mit' ? abnahme.tasks.map((t) => t.text) : [],
     };
 
-    const blob = await generatePDFBlob(signatures);
-    const reader = new FileReader();
-    reader.readAsDataURL(blob);
-    reader.onloadend = () => {
-      const base64data = reader.result;
-      window.location.href = `mailto:?subject=Abnahmeprotokoll&body=Anbei der Bericht.&attachment=${base64data}`;
-    };
-    addReportToHistory('Abnahmeprotokoll', 'versendet', abnahme.number);
+    try {
+      await submitAbnahmeProtocol(currentUser.id, input, blob);
+      alert('Abnahme gespeichert und ans Büro übertragen.');
+      resetAbnahme();
+    } catch (error) {
+      console.error('Abnahme konnte nicht übertragen werden:', error);
+      try {
+        await queueAbnahme(currentUser.id, input, blob);
+        setPendingAbnahmen((n) => n + 1);
+        alert('Keine Verbindung. Die PDF liegt auf dem Gerät, die Abnahme wird automatisch ans Büro übertragen, sobald wieder Netz da ist.');
+        resetAbnahme();
+      } catch (queueError) {
+        // Puffern ging auch nicht — dann darf das Formular nicht geleert
+        // werden, sonst ist die Eingabe weg und nur die PDF bleibt übrig.
+        console.error('Abnahme konnte nicht gepuffert werden:', queueError);
+        alert('Die Abnahme konnte weder übertragen noch auf dem Gerät gesichert werden. Die PDF ist gespeichert — bitte die Abnahme mit Netz erneut speichern.');
+      }
+    }
   };
 
   const handleResetWeeklyReport = () => {
@@ -840,7 +894,7 @@ export default function App() {
           : 'Keine Verbindung. Der Bericht ist auf dem Gerät gesichert und wird automatisch übertragen, sobald wieder Netz da ist.',
       );
     }
-    else if (signatureAction === 'saveA' || signatureAction === 'sendA') {
+    else if (signatureAction === 'saveA') {
         if (signatureStep === 'employee') {
             const empSig = sigCanvas.current?.getCanvas().toDataURL('image/png');
             setAbnahme(prev => ({...prev, employeeSignature: empSig}));
@@ -850,15 +904,9 @@ export default function App() {
         } else {
             const custSig = sigCanvas.current?.getCanvas().toDataURL('image/png');
             const empSig = abnahme.employeeSignature;
-            
+
             setAbnahme(prev => ({...prev, customerSignature: custSig}));
-            
-            if (signatureAction === 'saveA') {
-              handleSaveReport({ employee: empSig, customer: custSig });
-            } else {
-              handleSendReport({ employee: empSig, customer: custSig });
-            }
-            
+            handleSaveReport({ employee: empSig, customer: custSig });
             setAbnahme(prev => ({...prev, employeeSignature: undefined, customerSignature: undefined})); // Reset signatures
         }
     }
@@ -1299,6 +1347,13 @@ export default function App() {
                 className="space-y-6"
               >
                 <h2 className="text-2xl font-bold">Abnahmeprotokoll</h2>
+                {pendingAbnahmen > 0 && (
+                  <p className="text-sm bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3">
+                    {pendingAbnahmen === 1
+                      ? 'Eine Abnahme wartet noch auf die Übertragung ans Büro. Sie geht automatisch raus, sobald wieder Netz da ist.'
+                      : `${pendingAbnahmen} Abnahmen warten noch auf die Übertragung ans Büro. Sie gehen automatisch raus, sobald wieder Netz da ist.`}
+                  </p>
+                )}
                 {!isAbnahmePreview ? (
                   <div className="space-y-6">
                     {/* Container 1: Projektdaten */}
@@ -1662,11 +1717,11 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Bottom preview buttons - Abbrechen, then Abnahme speichern, then Abnahme senden */}
+                    {/* Ein Versand entfällt — gespeichert heißt: PDF aufs Gerät
+                        und dieselbe Datei ans Büro. */}
                     <div className="flex flex-col sm:flex-row gap-4 pt-6">
                       <button onClick={() => setIsAbnahmePreview(false)} className="w-full sm:flex-1 bg-gray-200 text-[#141414] p-4 rounded-2xl font-bold hover:bg-gray-300 transition-colors cursor-pointer text-center">Abbrechen</button>
-                      <button onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('saveA'); }} className="w-full sm:flex-1 bg-brand-accent2 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent2/90 transition-colors cursor-pointer text-center">Abnahme speichern</button>
-                      <button onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('sendA'); }} className="w-full sm:flex-1 bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center">Abnahme senden</button>
+                      <button onClick={() => { setIsSignatureModalOpen(true); setSignatureAction('saveA'); }} className="w-full sm:flex-1 bg-brand-accent1 text-white p-4 rounded-2xl font-bold hover:bg-brand-accent1/90 transition-colors cursor-pointer text-center">Abnahme speichern</button>
                     </div>
                   </div>
                 )}
@@ -1677,7 +1732,7 @@ export default function App() {
               <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                 <div className="bg-white p-6 rounded-3xl w-full max-w-lg space-y-4">
                   <h3 className="font-bold text-lg">
-                    {signatureAction === 'saveA' || signatureAction === 'sendA' 
+                    {signatureAction === 'saveA'
                        ? (signatureStep === 'employee' ? 'Unterschrift Mitarbeiter' : 'Unterschrift Kunde')
                        : 'Hiermit bestätige ich die Richtigkeit der Eingaben:'}
                   </h3>

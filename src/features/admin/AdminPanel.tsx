@@ -3,6 +3,7 @@ import { Plus, Trash2, Pencil, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase.ts';
 import UserManagement from './UserManagement.tsx';
 import WeeklyReportsAdmin from './WeeklyReportsAdmin.tsx';
+import AbnahmeProtocolsAdmin from './AbnahmeProtocolsAdmin.tsx';
 import LeaveAdmin from '../leave/LeaveAdmin.tsx';
 import type { Employee, Holiday, LeaveRequest, Site } from '../../lib/database.types.ts';
 
@@ -100,22 +101,21 @@ export default function AdminPanel({
         </p>
       )}
 
+      {/* Reihenfolge nach Gebrauch im Büro: erst was laufend hereinkommt
+          (Berichte, Abnahmen, Anträge), dann die Stammdaten. */}
+
+      {/* --------------------------------------------------------------- */}
+      <WeeklyReportsAdmin />
+
+      {/* --------------------------------------------------------------- */}
+      <AbnahmeProtocolsAdmin />
+
       {/* --------------------------------------------------------------- */}
       <LeaveAdmin
         employees={employees}
         leaveRequests={leaveRequests}
         holidays={holidays}
         assignmentCountInRange={assignmentCountInRange}
-        onChanged={onChanged}
-      />
-
-      {/* --------------------------------------------------------------- */}
-      <WeeklyReportsAdmin />
-
-      {/* --------------------------------------------------------------- */}
-      <UserManagement
-        employees={employees}
-        currentUserId={currentUserId}
         onChanged={onChanged}
       />
 
@@ -195,6 +195,13 @@ export default function AdminPanel({
           )}
         </div>
       </section>
+
+      {/* --------------------------------------------------------------- */}
+      <UserManagement
+        employees={employees}
+        currentUserId={currentUserId}
+        onChanged={onChanged}
+      />
 
     </div>
   );

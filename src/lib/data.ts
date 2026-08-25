@@ -682,3 +682,104 @@ export async function reopenWeeklyReport(reportId: string): Promise<void> {
     throw new Error('Bericht konnte nicht entsperrt werden: keine Berechtigung oder Bericht nicht gefunden.');
   }
 }
+
+// ---------------------------------------------------------------------------
+// Abnahmeprotokolle
+// ---------------------------------------------------------------------------
+
+/** Die Daten einer Abnahme, so wie der Maler sie eingegeben hat. */
+export interface AbnahmeInput {
+  siteNumber: string;
+  siteAddress: string;
+  participants: string[];
+  type: 'teil' | 'gesamt';
+  status: 'ohne' | 'mit';
+  defects: string[];
+}
+
+/** Ein gespeichertes Protokoll, wie es die Verwaltung auflistet. */
+export interface AbnahmeProtocol {
+  id: string;
+  employee_id: string;
+  created_at: string;
+  site_number: string;
+  site_address: string;
+  participants: string[];
+  type: 'teil' | 'gesamt';
+  status: 'ohne' | 'mit';
+  defects: string[];
+  pdf_path: string;
+  employees: { first_name: string; last_name: string } | null;
+}
+
+/**
+ * Übermittelt eine Abnahme ans Büro: erst die PDF in den Bucket, dann die
+ * Textdaten mit dem Pfad darauf.
+ *
+ * Diese Reihenfolge ist Absicht. Bricht der Upload ab, entsteht kein Eintrag,
+ * der auf eine fehlende Datei zeigt — der Aufrufer versucht es später
+ * komplett neu. Eine verwaiste PDF ohne Eintrag ist dagegen harmlos.
+ */
+export async function submitAbnahmeProtocol(
+  employeeId: string,
+  input: AbnahmeInput,
+  pdf: Blob,
+): Promise<void> {
+  // Der Ordner je Mitarbeiter ist zugleich die Zugriffsregel im Bucket.
+  const path = `${employeeId}/${crypto.randomUUID()}.pdf`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('abnahmen')
+    .upload(path, pdf, { contentType: 'application/pdf' });
+  if (uploadError) {
+    throw new Error(`Abnahme-PDF konnte nicht übertragen werden: ${uploadError.message}`);
+  }
+
+  const { error } = await supabase.from('abnahme_protocols').insert({
+    employee_id: employeeId,
+    site_number: input.siteNumber,
+    site_address: input.siteAddress,
+    participants: input.participants,
+    type: input.type,
+    status: input.status,
+    defects: input.defects,
+    pdf_path: path,
+  });
+  if (error) {
+    throw new Error(`Abnahme konnte nicht gespeichert werden: ${error.message}`);
+  }
+}
+
+/**
+ * Alle Protokolle, neueste zuerst.
+ *
+ * Eine Abnahme hängt an keiner Kalenderwoche — anders als der Wochenbericht
+ * wird hier deshalb nicht geblättert, sondern durchgehend gelistet.
+ */
+export async function fetchAbnahmeProtocols(limit = 100): Promise<AbnahmeProtocol[]> {
+  const result = await supabase
+    .from('abnahme_protocols')
+    .select('*, employees(first_name, last_name)')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  return unwrap<AbnahmeProtocol[]>(
+    result as unknown as { data: AbnahmeProtocol[] | null; error: { message: string } | null },
+    'Abnahmeprotokolle',
+  );
+}
+
+/**
+ * Holt die hochgeladene PDF eines Protokolls.
+ *
+ * Der Bucket ist privat, deshalb eine signierte URL statt eines festen Links:
+ * Ein Abnahmeprotokoll trägt Namen, Adresse und Unterschriften und darf nicht
+ * dauerhaft im Netz erreichbar sein.
+ */
+export async function abnahmePdfUrl(path: string): Promise<string> {
+  const { data, error } = await supabase.storage.from('abnahmen').createSignedUrl(path, 60);
+  if (error || !data) {
+    throw new Error(`PDF konnte nicht geöffnet werden: ${error?.message ?? 'unbekannter Fehler'}`);
+  }
+  return data.signedUrl;
+}

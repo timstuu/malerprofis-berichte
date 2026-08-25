@@ -69,10 +69,18 @@ export default function LeaveAdmin({
     return parts.join(' · ');
   };
 
+  /**
+   * Die entschiedenen Anträge, angezeigt wie die offenen: der zeitlich
+   * nächste Urlaub oben.
+   *
+   * Ausgewählt wird aber absteigend. Sonst füllt die Begrenzung die Liste mit
+   * den ältesten Anträgen, die es je gab, und der laufende Monat fehlt.
+   */
   const decided = leaveRequests
     .filter((r) => r.status !== 'pending')
     .sort((a, b) => b.start_date.localeCompare(a.start_date))
-    .slice(0, 15);
+    .slice(0, 15)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date));
 
   /**
    * Genehmigten Urlaub zurückziehen, weil umgeplant wird.
@@ -148,13 +156,15 @@ export default function LeaveAdmin({
         </p>
       )}
 
-      {/* ------------------------------------------------------------- */}
+      {/* Offene und entschiedene Anträge in einer Liste: Das Büro sieht sonst
+          zweimal dieselbe Person und muss zwischen den Blöcken vergleichen.
+          Zu entscheiden ist oben, darunter steht der Verlauf. */}
       <section className="space-y-4">
         <h3 className="text-lg font-bold flex items-center gap-2">
-          Offene Anträge
+          Urlaubsanträge
           {pending.length > 0 && (
             <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2 py-0.5 rounded-full">
-              {pending.length}
+              {pending.length} offen
             </span>
           )}
         </h3>
@@ -222,13 +232,15 @@ export default function LeaveAdmin({
               Keine offenen Anträge.
             </div>
           )}
-        </div>
-      </section>
 
-      {/* ------------------------------------------------------------- */}
-      <section className="space-y-4">
-        <h3 className="text-lg font-bold">Zuletzt entschieden</h3>
-        <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-[#141414]/5">
+          {decided.length > 0 && (
+            <div className="px-4 py-2 bg-gray-50/80 border-t border-[#141414]/5">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#141414]/40">
+                Entschieden
+              </p>
+            </div>
+          )}
+
           {decided.map((req, i) => (
             <div
               key={req.id}
@@ -266,9 +278,6 @@ export default function LeaveAdmin({
               </div>
             </div>
           ))}
-          {decided.length === 0 && (
-            <div className="p-8 text-center text-[#141414]/30 text-sm">Noch nichts entschieden.</div>
-          )}
         </div>
       </section>
     </div>
