@@ -139,6 +139,14 @@ export default function AbnahmeProtocolsAdmin() {
 
                   {protocol.status === 'mit' && (
                     <div>
+                      <p className="text-xs font-semibold text-[#141414]/40 uppercase">
+                        Nacharbeiten bis
+                      </p>
+                      <p className="text-sm text-gray-800 mb-3">
+                        {protocol.rework_due
+                          ? format(new Date(`${protocol.rework_due}T00:00:00`), 'dd.MM.yyyy')
+                          : 'Termin wird noch festgelegt'}
+                      </p>
                       <p className="text-xs font-semibold text-[#141414]/40 uppercase pb-1">
                         Mängel / Restarbeiten
                       </p>

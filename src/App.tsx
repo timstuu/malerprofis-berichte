@@ -301,6 +301,7 @@ export default function App() {
     type: 'teil' | 'gesamt';
     status: 'ohne' | 'mit';
     tasks: { text: string; photo?: string }[];
+    reworkDue: string;
     employeeSignature?: string;
     customerSignature?: string;
   }>({
@@ -309,7 +310,8 @@ export default function App() {
     participants: [] as string[],
     type: 'gesamt',
     status: 'ohne',
-    tasks: [] as { text: string; photo?: string }[]
+    tasks: [] as { text: string; photo?: string }[],
+    reworkDue: ''
   });
   const [newParticipant, setNewParticipant] = useState('');
   const [newTask, setNewTask] = useState('');
@@ -366,7 +368,8 @@ export default function App() {
       participants: [],
       type: 'gesamt',
       status: 'ohne',
-      tasks: []
+      tasks: [],
+      reworkDue: ''
     });
     setIsAbnahmePreview(false);
   };
@@ -741,6 +744,16 @@ export default function App() {
     doc.text(`Status: ${abnahme.status === 'ohne' ? 'Ohne sichtbare Mängel' : 'Mit Mängeln/Restarbeiten'}`, 20, currentY + 40);
 
     currentY += 50;
+    // Die Frist gehört zum Mängelfall und steht deshalb auch dann im Bericht,
+    // wenn (noch) kein einzelner Mangel aufgeführt ist. Ohne Datum wird der
+    // offene Termin ausdrücklich benannt, statt ihn wegzulassen.
+    if (abnahme.status === 'mit') {
+      const terminText = abnahme.reworkDue
+        ? `Nacharbeiten bis: ${format(new Date(`${abnahme.reworkDue}T00:00:00`), 'dd.MM.yyyy')}`
+        : 'Termin für die Nacharbeiten wird noch festgelegt.';
+      doc.text(terminText, 20, currentY);
+      currentY += 10;
+    }
     if (abnahme.status === 'mit' && abnahme.tasks && abnahme.tasks.length > 0) {
       doc.text(`Mängel/Kommentar:`, 20, currentY);
       currentY += 10;
@@ -839,6 +852,8 @@ export default function App() {
       status: abnahme.status,
       // Nur die Texte. Die Fotos stecken in der PDF, die gerade hochgeht.
       defects: abnahme.status === 'mit' ? abnahme.tasks.map((t) => t.text) : [],
+      // Frist nur mitschicken, wenn es Mängel gibt und ein Datum steht.
+      reworkDue: abnahme.status === 'mit' && abnahme.reworkDue ? abnahme.reworkDue : null,
     };
 
     try {
@@ -1520,7 +1535,24 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* 3. Mängel/Kommentar bei "Mit Mängeln/Restarbeiten" */}
+                        {/* 3. Frist für die Nacharbeiten — nur bei Mängeln */}
+                        {abnahme.status === 'mit' && (
+                          <div className="space-y-2 pt-2 border-t border-gray-100/80 mt-3 animate-fade-in">
+                            <label className="text-xs font-semibold text-[#141414]/50 uppercase tracking-wider block">Nacharbeiten bis</label>
+                            <input
+                              type="date"
+                              value={abnahme.reworkDue}
+                              min={format(new Date(), 'yyyy-MM-dd')}
+                              onChange={e => setAbnahme({ ...abnahme, reworkDue: e.target.value })}
+                              className="w-full p-3.5 bg-gray-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-accent1/20"
+                            />
+                            <p className="text-xs text-[#141414]/40">
+                              Ohne Datum steht im Bericht, dass der Termin noch festgelegt wird.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* 4. Mängel/Kommentar bei "Mit Mängeln/Restarbeiten" */}
                         {abnahme.status === 'mit' && (
                           <div className="space-y-2 pt-2 border-t border-gray-100/80 mt-3 animate-fade-in">
                             <label className="text-xs font-semibold text-[#141414]/50 uppercase tracking-wider block">Mängel/Kommentar</label>
@@ -1693,6 +1725,12 @@ export default function App() {
 
                       {abnahme.status === 'mit' && (
                         <div className="pt-3 border-t border-gray-100/80 mt-2">
+                          <p className="text-xs font-semibold text-[#141414]/40 uppercase">Nacharbeiten bis</p>
+                          <p className="text-sm font-bold text-gray-800 mb-3">
+                            {abnahme.reworkDue
+                              ? format(new Date(`${abnahme.reworkDue}T00:00:00`), 'dd.MM.yyyy')
+                              : 'Termin wird noch festgelegt'}
+                          </p>
                           <p className="text-xs font-semibold text-[#141414]/40 uppercase pb-1.5">Mängel/Kommentar</p>
                           {abnahme.tasks.length > 0 ? (
                             <div className="space-y-3.5 pl-2 pt-1">

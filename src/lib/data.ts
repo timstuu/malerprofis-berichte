@@ -695,6 +695,8 @@ export interface AbnahmeInput {
   type: 'teil' | 'gesamt';
   status: 'ohne' | 'mit';
   defects: string[];
+  /** Frist für die Nacharbeiten. null = noch nicht terminiert. */
+  reworkDue: string | null;
 }
 
 /** Ein gespeichertes Protokoll, wie es die Verwaltung auflistet. */
@@ -708,6 +710,7 @@ export interface AbnahmeProtocol {
   type: 'teil' | 'gesamt';
   status: 'ohne' | 'mit';
   defects: string[];
+  rework_due: string | null;
   pdf_path: string;
   employees: { first_name: string; last_name: string } | null;
 }
@@ -743,6 +746,7 @@ export async function submitAbnahmeProtocol(
     type: input.type,
     status: input.status,
     defects: input.defects,
+    rework_due: input.reworkDue,
     pdf_path: path,
   });
   if (error) {
