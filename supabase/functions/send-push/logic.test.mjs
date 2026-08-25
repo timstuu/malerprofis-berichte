@@ -121,90 +121,103 @@ function check(name, cond, detail) {
 
 const handler = await loadHandler();
 
-// 1. Neuer Einsatz -> an beide Geräte des Malers
+// 1. Abgeschlossene Planungsrunde -> eine Sammelmeldung an die Betroffenen
 {
-  const { messages } = await fire(handler, { type: 'INSERT', table: 'assignments', record: A(), old_record: null });
-  check('Neuer Einsatz erreicht beide Geräte',
+  const { messages } = await fire(handler, {
+    type: 'INSERT', table: 'plan_change_events',
+    record: { id: 'e-1', week_start: '2026-08-24', employee_ids: ['maler-1'] },
+    old_record: null,
+  });
+  check('Planungsrunde erreicht beide Geräte des Malers',
     messages.length === 2 && messages.every((m) => m.endpoint.startsWith('ep-maler-1')),
     JSON.stringify(messages.map((m) => m.endpoint)));
-  check('Titel und Baustelle stimmen',
-    messages[0]?.title === 'Neuer Einsatz am 01.09.2026' && messages[0]?.body.includes('040-7 · Luisenweg 7'),
-    JSON.stringify(messages[0]));
-  check('Kennzeichen je Mitarbeiter und Tag',
-    messages[0]?.tag === 'plan-maler-1-2026-09-01', messages[0]?.tag);
+  check('Der Text nennt genau die Kalenderwoche',
+    messages[0]?.body === 'Die Planung wurde für die KW 35 geändert.', messages[0]?.body);
+  check('Titel bleibt schlicht', messages[0]?.title === 'Planung geändert', messages[0]?.title);
+  check('Kennzeichen je Woche', messages[0]?.tag === 'plan-week-2026-08-24', messages[0]?.tag);
 }
 
-// 2. Umhängen auf anderen Maler -> zwei verschiedene Nachrichten
+// 2. Nur wer in employee_ids steht, bekommt etwas
 {
   const { messages } = await fire(handler, {
-    type: 'UPDATE', table: 'assignments',
-    record: A({ employee_id: 'maler-2' }), old_record: A(),
+    type: 'INSERT', table: 'plan_change_events',
+    record: { id: 'e-2', week_start: '2026-08-24', employee_ids: ['maler-2'] },
+    old_record: null,
   });
-  const an2 = messages.filter((m) => m.endpoint === 'ep-maler-2');
-  const an1 = messages.filter((m) => m.endpoint.startsWith('ep-maler-1'));
-  check('Umhängen: neuer Maler bekommt "Neuer Einsatz"',
-    an2.length === 1 && an2[0].title.startsWith('Neuer Einsatz'), JSON.stringify(an2));
-  check('Umhängen: alter Maler bekommt "gestrichen" (beide Geräte)',
-    an1.length === 2 && an1.every((m) => m.title.includes('gestrichen')), JSON.stringify(an1));
+  check('Unbeteiligter Maler bekommt nichts',
+    messages.length === 1 && messages[0].endpoint === 'ep-maler-2',
+    JSON.stringify(messages.map((m) => m.endpoint)));
 }
 
-// 3. Verschieben auf anderen Tag -> neue Nachricht + alte überschreiben
+// 3. Mehrere Betroffene in einer Runde
 {
   const { messages } = await fire(handler, {
-    type: 'UPDATE', table: 'assignments',
-    record: A({ date: '2026-09-02' }), old_record: A(),
+    type: 'INSERT', table: 'plan_change_events',
+    record: { id: 'e-3', week_start: '2026-08-24', employee_ids: ['maler-1', 'maler-2'] },
+    old_record: null,
   });
-  const tags = [...new Set(messages.map((m) => m.tag))].sort();
-  check('Verschieben meldet neuen und alten Tag',
-    tags.length === 2 && tags.includes('plan-maler-1-2026-09-02') && tags.includes('plan-maler-1-2026-09-01'),
-    JSON.stringify(tags));
-  check('Verschieben nennt das neue Datum im Titel',
-    messages.some((m) => m.title === 'Einsatz verschoben auf 02.09.2026'),
-    JSON.stringify(messages.map((m) => m.title)));
+  check('Beide Betroffenen werden erreicht (drei Geräte)',
+    messages.length === 3, JSON.stringify(messages.map((m) => m.endpoint)));
+  check('Alle bekommen denselben Wortlaut',
+    new Set(messages.map((m) => m.body)).size === 1,
+    JSON.stringify([...new Set(messages.map((m) => m.body))]));
 }
 
-// 4. Belangloses Update -> keine Nachricht
+// 4. Leere Liste -> nichts
 {
   const { messages } = await fire(handler, {
-    type: 'UPDATE', table: 'assignments',
-    record: A({ id: 'anders-egal' }), old_record: A(),
+    type: 'INSERT', table: 'plan_change_events',
+    record: { id: 'e-4', week_start: '2026-08-24', employee_ids: [] },
+    old_record: null,
   });
-  check('Update ohne inhaltliche Änderung schweigt', messages.length === 0,
-    JSON.stringify(messages.map((m) => m.title)));
+  check('Runde ohne Betroffene bleibt stumm', messages.length === 0,
+    JSON.stringify(messages.map((m) => m.body)));
 }
 
-// 5. Notiz geändert -> Nachricht mit Notiz
+// 5. Kalenderwoche: Jahreswechsel und Randfälle nach ISO 8601
 {
-  const { messages } = await fire(handler, {
-    type: 'UPDATE', table: 'assignments',
-    record: A({ note: 'Kunde ab 10 Uhr da' }), old_record: A(),
-  });
-  check('Geänderte Notiz löst Nachricht aus und steht drin',
-    messages.length === 2 && messages[0].body.includes('Kunde ab 10 Uhr da'),
-    JSON.stringify(messages[0]));
+  const faelle = [
+    ['2026-08-24', 35],
+    ['2026-01-05', 2],
+    ['2025-12-29', 1],   // gehört bereits zur KW 1 von 2026
+    ['2026-12-28', 53],  // 2026 hat 53 Wochen
+    ['2027-01-04', 1],
+    ['2024-12-30', 1],   // KW 1 von 2025
+  ];
+  for (const [montag, erwartet] of faelle) {
+    const { messages } = await fire(handler, {
+      type: 'INSERT', table: 'plan_change_events',
+      record: { id: `w-${montag}`, week_start: montag, employee_ids: ['maler-2'] },
+      old_record: null,
+    });
+    check(`KW für Montag ${montag} ist ${erwartet}`,
+      messages[0]?.body === `Die Planung wurde für die KW ${erwartet} geändert.`,
+      messages[0]?.body);
+  }
 }
 
-// 6. Löschen an einem Urlaubstag -> stumm
+// 6. Einzelne Einsatzänderung löst nichts mehr aus
 {
-  DB.leave_requests = [{ id: 'l-1', employee_id: 'maler-1', status: 'approved', start_date: '2026-09-01', end_date: '2026-09-14' }];
-  const { messages } = await fire(handler, { type: 'DELETE', table: 'assignments', record: null, old_record: A() });
-  check('Streichung im genehmigten Urlaub bleibt stumm', messages.length === 0,
-    JSON.stringify(messages.map((m) => m.title)));
-
-  // ausserhalb des Urlaubs muss sie ankommen
-  const out = await fire(handler, { type: 'DELETE', table: 'assignments', record: null, old_record: A({ date: '2026-10-05' }) });
-  check('Streichung ausserhalb des Urlaubs kommt an',
-    out.messages.length === 2 && out.messages[0].title.includes('gestrichen'),
-    JSON.stringify(out.messages.map((m) => m.title)));
-  DB.leave_requests = [];
+  const { messages, body } = await fire(handler, {
+    type: 'INSERT', table: 'assignments',
+    record: { id: 'a-1', employee_id: 'maler-1', site_id: 'site-1', date: '2026-09-01' },
+    old_record: null,
+  });
+  check('Einzelne Einsatzzeile benachrichtigt niemanden mehr',
+    messages.length === 0 && body.sent === 0, JSON.stringify(body));
 }
 
 // 7. Einstellung "plan_changed" aus -> nichts an diesen Maler
 {
   DB.push_preferences = [{ employee_id: 'maler-1', kind: 'plan_changed', enabled: false }];
-  const { messages } = await fire(handler, { type: 'INSERT', table: 'assignments', record: A(), old_record: null });
-  check('Abgeschaltete Planänderung wird nicht zugestellt', messages.length === 0,
-    JSON.stringify(messages.map((m) => m.title)));
+  const { messages } = await fire(handler, {
+    type: 'INSERT', table: 'plan_change_events',
+    record: { id: 'e-7', week_start: '2026-08-24', employee_ids: ['maler-1', 'maler-2'] },
+    old_record: null,
+  });
+  check('Abgeschaltete Planänderung wird übersprungen, andere bekommen sie',
+    messages.length === 1 && messages[0].endpoint === 'ep-maler-2',
+    JSON.stringify(messages.map((m) => m.endpoint)));
 
   // andere Art bleibt unberührt
   const leave = await fire(handler, {

@@ -7,8 +7,8 @@
  *     INSERT eines Antrags   -> Nachricht an alle Büro-Konten
  *     UPDATE des Status      -> Nachricht an den Antragsteller
  *
- *   public.assignments
- *     INSERT / UPDATE / DELETE -> Nachricht an den betroffenen Maler
+ *   public.plan_change_events
+ *     INSERT -> eine Sammelmeldung je Woche an die betroffenen Maler
  *
  * Der Versand muss serverseitig laufen, weil die Nachricht mit dem privaten
  * VAPID-Schlüssel signiert wird. Im Browser wäre dieser Schlüssel für jeden
@@ -41,14 +41,11 @@ interface LeaveRequestRow {
   days_count: number;
 }
 
-interface AssignmentRow {
+/** Eine abgeschlossene Planungsrunde: eine Woche, die betroffenen Maler. */
+interface PlanChangeRow {
   id: string;
-  employee_id: string;
-  site_id: string;
-  date: string;
-  start_time: string;
-  end_time: string;
-  note: string | null;
+  week_start: string;
+  employee_ids: string[];
 }
 
 interface WebhookPayload {
@@ -116,23 +113,6 @@ function formatDate(iso: string): string {
   return `${d}.${m}.${y}`;
 }
 
-/** „08:00 – 16:30" aus zwei Zeitfeldern der Datenbank. */
-function formatSpan(start: string, end: string): string {
-  return `${start.slice(0, 5)} – ${end.slice(0, 5)}`;
-}
-
-/** Baustelle als „040-7 · Luisenweg 7". Fehlt sie, bleibt es leer. */
-async function siteLabel(siteId: string | undefined): Promise<string> {
-  if (!siteId) return '';
-  const { data } = await supabase
-    .from('sites')
-    .select('number, address')
-    .eq('id', siteId)
-    .maybeSingle();
-  if (!data) return '';
-  return `${data.number} · ${data.address}`;
-}
-
 // ---------------------------------------------------------------------------
 // Urlaubsanträge
 // ---------------------------------------------------------------------------
@@ -185,156 +165,55 @@ async function planLeaveNotifications(payload: WebhookPayload): Promise<Plan[]> 
 }
 
 // ---------------------------------------------------------------------------
-// Einsatzplanung
+// Planänderungen
 // ---------------------------------------------------------------------------
 
 /**
- * Ein Kennzeichen je Mitarbeiter und Tag.
+ * Die Kalenderwoche nach ISO 8601.
  *
- * Das Gerät ersetzt eine Nachricht, deren Kennzeichen bereits angezeigt wird.
- * Plant das Büro einen Tag mehrfach um, bleibt so eine Nachricht stehen statt
- * fünf — der Maler soll wissen, dass sich der Tag geändert hat, und nicht jeden
- * Zwischenschritt mitlesen.
+ * Von Hand gerechnet, weil in dieser Umgebung keine Datumsbibliothek liegt und
+ * eine falsche Wochennummer die Nachricht wertlos macht: Sie ist alles, was
+ * darin steht. Die Regel lautet, dass die Woche zu dem Jahr gehört, in dem ihr
+ * Donnerstag liegt — deshalb der Umweg über diesen Tag.
  */
-function planTag(employeeId: string, date: string): string {
-  return `plan-${employeeId}-${date}`;
-}
+function isoWeek(dateIso: string): number {
+  const d = new Date(`${dateIso}T00:00:00Z`);
+  const weekday = (d.getUTCDay() + 6) % 7; // Montag = 0
+  d.setUTCDate(d.getUTCDate() - weekday + 3); // Donnerstag dieser Woche
 
-/** Liegt an diesem Tag genehmigter Urlaub oder Krankheit vor? */
-async function coveredByApprovedLeave(employeeId: string, date: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('leave_requests')
-    .select('id')
-    .eq('employee_id', employeeId)
-    .eq('status', 'approved')
-    .lte('start_date', date)
-    .gte('end_date', date)
-    .limit(1);
-  if (error) {
-    // Im Zweifel zustellen — lieber eine Nachricht zu viel als eine
-    // verschwiegene Streichung.
-    console.error('Urlaub konnte nicht geprüft werden:', error.message);
-    return false;
-  }
-  return (data ?? []).length > 0;
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const firstWeekday = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstWeekday + 3);
+
+  const week = 1 + Math.round((d.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000));
+  return week;
 }
 
 /**
- * Nachrichten zu einer geänderten Planzeile.
+ * Eine Meldung für eine abgeschlossene Planungsrunde.
  *
- * Der Mitarbeiterwechsel ist der Grund, warum hier mehrere Nachrichten
- * herauskommen können: Wird ein Einsatz umgehängt, verliert ihn der eine und
- * bekommt ihn der andere — beide müssen es erfahren.
+ * Bewusst ohne Baustelle, Uhrzeit und Art der Änderung: Wer einen Tag umplant,
+ * erzeugt ein Dutzend Einzelschritte, und die zusammen sind am Handy nicht zu
+ * lesen. Was sich genau geändert hat, steht im Raster — die Nachricht sagt nur,
+ * dass es sich lohnt, dort nachzusehen.
  */
-async function planAssignmentNotifications(payload: WebhookPayload): Promise<Plan[]> {
-  const record = payload.record as unknown as AssignmentRow | null;
-  const oldRecord = payload.old_record as unknown as AssignmentRow | null;
+function planChangeNotifications(payload: WebhookPayload): Plan[] {
+  if (payload.type !== 'INSERT') return [];
+  const record = payload.record as unknown as PlanChangeRow | null;
+  if (!record || !record.employee_ids || record.employee_ids.length === 0) return [];
 
-  if (payload.type === 'INSERT' && record) {
-    const site = await siteLabel(record.site_id);
-    return [
-      {
-        kind: 'plan_changed',
-        employeeIds: [record.employee_id],
-        title: `Neuer Einsatz am ${formatDate(record.date)}`,
-        body: [site, formatSpan(record.start_time, record.end_time)].filter(Boolean).join(' · '),
-        tag: planTag(record.employee_id, record.date),
-      },
-    ];
-  }
-
-  if (payload.type === 'DELETE' && oldRecord) {
-    // Eine Urlaubsgenehmigung räumt alle Einsätze des Zeitraums weg
-    // (approve_leave_request in 0002_leave.sql). Ohne diese Prüfung bekäme
-    // jemand nach zwei Wochen Urlaub zehn Streichungen hinterhergeschickt,
-    // obwohl die Genehmigung längst alles gesagt hat.
-    if (await coveredByApprovedLeave(oldRecord.employee_id, oldRecord.date)) return [];
-
-    const site = await siteLabel(oldRecord.site_id);
-    return [
-      {
-        kind: 'plan_changed',
-        employeeIds: [oldRecord.employee_id],
-        title: `Einsatz am ${formatDate(oldRecord.date)} gestrichen`,
-        body: site || 'Der Einsatz wurde aus der Planung entfernt.',
-        tag: planTag(oldRecord.employee_id, oldRecord.date),
-      },
-    ];
-  }
-
-  if (payload.type === 'UPDATE' && record && oldRecord) {
-    // Umgehängt: zwei Betroffene, zwei verschiedene Nachrichten.
-    if (record.employee_id !== oldRecord.employee_id) {
-      const [neu, alt] = await Promise.all([
-        siteLabel(record.site_id),
-        siteLabel(oldRecord.site_id),
-      ]);
-      return [
-        {
-          kind: 'plan_changed',
-          employeeIds: [record.employee_id],
-          title: `Neuer Einsatz am ${formatDate(record.date)}`,
-          body: [neu, formatSpan(record.start_time, record.end_time)].filter(Boolean).join(' · '),
-          tag: planTag(record.employee_id, record.date),
-        },
-        {
-          kind: 'plan_changed',
-          employeeIds: [oldRecord.employee_id],
-          title: `Einsatz am ${formatDate(oldRecord.date)} gestrichen`,
-          body: alt || 'Der Einsatz wurde jemand anderem zugeteilt.',
-          tag: planTag(oldRecord.employee_id, oldRecord.date),
-        },
-      ];
-    }
-
-    // Sonst nur melden, wenn sich für den Maler wirklich etwas geändert hat.
-    // Ohne diese Prüfung löst jedes Speichern eine Nachricht aus, auch wenn
-    // nur ein technisches Feld angefasst wurde.
-    const relevant: (keyof AssignmentRow)[] = [
-      'date',
-      'site_id',
-      'start_time',
-      'end_time',
-      'note',
-    ];
-    if (relevant.every((field) => record[field] === oldRecord[field])) return [];
-
-    const site = await siteLabel(record.site_id);
-    const verschoben = record.date !== oldRecord.date;
-    const title = verschoben
-      ? `Einsatz verschoben auf ${formatDate(record.date)}`
-      : `Einsatz am ${formatDate(record.date)} geändert`;
-
-    const plans: Plan[] = [
-      {
-        kind: 'plan_changed',
-        employeeIds: [record.employee_id],
-        title,
-        body: [site, formatSpan(record.start_time, record.end_time), record.note ?? '']
-          .filter(Boolean)
-          .join(' · '),
-        tag: planTag(record.employee_id, record.date),
-      },
-    ];
-
-    // Beim Verschieben trägt die Nachricht das Kennzeichen des neuen Tages.
-    // Eine ältere Nachricht zum alten Tag bliebe daneben stehen und behauptete
-    // weiter, dort sei etwas — deshalb wird sie mit einer leeren Nachricht
-    // gleichen Kennzeichens überschrieben.
-    if (verschoben) {
-      plans.push({
-        kind: 'plan_changed',
-        employeeIds: [record.employee_id],
-        title: `Einsatz am ${formatDate(oldRecord.date)} entfällt`,
-        body: site || 'Der Einsatz wurde auf einen anderen Tag verschoben.',
-        tag: planTag(record.employee_id, oldRecord.date),
-      });
-    }
-
-    return plans;
-  }
-
-  return [];
+  const week = isoWeek(record.week_start);
+  return [
+    {
+      kind: 'plan_changed',
+      employeeIds: record.employee_ids,
+      title: 'Planung geändert',
+      body: `Die Planung wurde für die KW ${week} geändert.`,
+      // Je Woche ein Kennzeichen: Wird dieselbe Woche mehrfach überarbeitet,
+      // ersetzt die neue Meldung die alte, statt sich daneben zu stapeln.
+      tag: `plan-week-${record.week_start}`,
+    },
+  ];
 }
 
 /**
@@ -436,8 +315,8 @@ Deno.serve(async (req) => {
   let plans: Plan[];
   if (payload.table === 'leave_requests') {
     plans = await planLeaveNotifications(payload);
-  } else if (payload.table === 'assignments') {
-    plans = await planAssignmentNotifications(payload);
+  } else if (payload.table === 'plan_change_events') {
+    plans = planChangeNotifications(payload);
   } else {
     return new Response(JSON.stringify({ sent: 0, reason: `Tabelle ${payload.table} ignoriert` }), {
       headers: { 'Content-Type': 'application/json' },

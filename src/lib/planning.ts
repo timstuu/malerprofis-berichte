@@ -190,3 +190,24 @@ export async function markAssignments(
   );
   if (error) throw new Error(`Übernahmestand konnte nicht gespeichert werden: ${error.message}`);
 }
+
+/**
+ * Schließt eine Planungsrunde ab: eine Zeile je geänderter Woche.
+ *
+ * Ausgelöst wird das vom Klick auf „Fertig" in der Wochenplanung, nicht von
+ * der einzelnen Änderung. Daran hängt der Webhook, der die Maler
+ * benachrichtigt — deshalb steht hier bewusst eine Sammelmeldung und keine
+ * Liste der einzelnen Eingriffe.
+ */
+export async function recordPlanChanges(
+  rows: { weekStart: string; employeeIds: string[] }[],
+): Promise<void> {
+  const usable = rows.filter((r) => r.employeeIds.length > 0);
+  if (usable.length === 0) return;
+  const { error } = await supabase.from('plan_change_events').insert(
+    usable.map((r) => ({ week_start: r.weekStart, employee_ids: r.employeeIds })),
+  );
+  if (error) {
+    throw new Error(`Die Maler konnten nicht benachrichtigt werden: ${error.message}`);
+  }
+}

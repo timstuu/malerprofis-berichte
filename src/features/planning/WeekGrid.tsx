@@ -40,6 +40,7 @@ import {
   fetchImportedAssignmentIds,
   moveAssignment,
   updateAssignment,
+  recordPlanChanges,
   updateAssignmentNote,
 } from '../../lib/planning.ts';
 import { WEEKDAYS, breakMinutesForDate, defaultShiftFor, weekdayOf } from '../../lib/hours.ts';
@@ -112,6 +113,15 @@ export default function WeekGrid({
   /** Bildschirmfüllende Ansicht des Plans — nur zum Ansehen. */
   const [fullscreen, setFullscreen] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  /**
+   * Wer während der laufenden Bearbeitung betroffen war, je Woche.
+   *
+   * Die Maler bekommen erst beim Klick auf „Fertig" eine einzige Meldung je
+   * Woche — nicht bei jedem Zug. Der Bearbeitungsmodus überlebt den
+   * Wochenwechsel, deshalb eine Zuordnung je Woche und nicht nur ein Merker
+   * für die gerade sichtbare.
+   */
+  const pendingChanges = useRef(new Map<string, Set<string>>());
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
@@ -124,6 +134,47 @@ export default function WeekGrid({
 
   const readOnly = !canEdit || !editMode;
   const weekEnd = addDays(weekStart, DAY_COUNT - 1);
+
+  /**
+   * Vermerkt, dass sich für diese Maler in der sichtbaren Woche etwas geändert
+   * hat. Verschickt wird nichts — das passiert beim Beenden der Bearbeitung.
+   *
+   * Beim Verschieben auf einen anderen Maler sind zwei Personen betroffen:
+   * Der eine verliert den Einsatz, der andere bekommt ihn. Deshalb nimmt die
+   * Funktion mehrere Kennungen entgegen.
+   */
+  const markPlanChanged = (...employeeIds: string[]) => {
+    const key = format(weekStart, 'yyyy-MM-dd');
+    const affected = pendingChanges.current.get(key) ?? new Set<string>();
+    for (const id of employeeIds) affected.add(id);
+    pendingChanges.current.set(key, affected);
+  };
+
+  /**
+   * Beendet die Bearbeitung und schickt je geänderter Woche eine Meldung.
+   *
+   * Scheitert das Melden, bleiben die Vermerke stehen: Der nächste Abschluss
+   * nimmt sie wieder mit, statt sie stillschweigend zu verlieren. Die
+   * Planänderung selbst ist davon nicht betroffen — die steht längst in der
+   * Datenbank.
+   */
+  const finishEditing = async () => {
+    setEditing(null);
+    setEditMode(false);
+
+    const pending = pendingChanges.current;
+    if (pending.size === 0) return;
+    const rows = [...pending.entries()].map(([weekStartIso, ids]) => ({
+      weekStart: weekStartIso,
+      employeeIds: [...ids],
+    }));
+    try {
+      await recordPlanChanges(rows);
+      pendingChanges.current = new Map();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const days = Array.from({ length: DAY_COUNT }, (_, i) => {
     const date = addDays(weekStart, i);
@@ -218,6 +269,7 @@ export default function WeekGrid({
     if (!confirm(`Einsatz „${assignment.sites?.address ?? ''}“ löschen?`)) return;
     try {
       await deleteAssignment(assignment.id);
+      markPlanChanged(assignment.employee_id);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -238,6 +290,7 @@ export default function WeekGrid({
           note: assignment.note,
         },
       ]);
+      markPlanChanged(assignment.employee_id);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -275,6 +328,7 @@ export default function WeekGrid({
         startTime: assignment.start_time,
         endTime: assignment.end_time,
       });
+      markPlanChanged(assignment.employee_id, employeeId);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -335,6 +389,7 @@ export default function WeekGrid({
         format(previousStart, 'yyyy-MM-dd'),
         format(weekStart, 'yyyy-MM-dd'),
       );
+      markPlanChanged(...previous.map((a) => a.employee_id));
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -449,8 +504,12 @@ export default function WeekGrid({
           {canEdit && (
             <button
               onClick={() => {
-                setEditing(null);
-                setEditMode((on) => !on);
+                if (editMode) {
+                  finishEditing();
+                } else {
+                  setEditing(null);
+                  setEditMode(true);
+                }
               }}
               className={`flex items-center gap-2 text-xs font-bold px-3 py-2 rounded-xl cursor-pointer ${
                 editMode
@@ -600,6 +659,7 @@ export default function WeekGrid({
                               onCancel={() => setEditAssignmentId(null)}
                               onSaved={async () => {
                                 setEditAssignmentId(null);
+                                markPlanChanged(a.employee_id);
                                 await load();
                               }}
                               onError={setError}
@@ -625,7 +685,12 @@ export default function WeekGrid({
                             onDelete={() => remove(a)}
                             onDuplicate={() => duplicate(a)}
                             onEdit={() => setEditAssignmentId(a.id)}
-                            onNote={(note) => run(() => updateAssignmentNote(a.id, note))}
+                            onNote={(note) =>
+                              run(async () => {
+                                await updateAssignmentNote(a.id, note);
+                                markPlanChanged(a.employee_id);
+                              })
+                            }
                           />
                           ),
                         )}
@@ -639,6 +704,7 @@ export default function WeekGrid({
                               onCancel={() => setEditing(null)}
                               onSaved={async () => {
                                 setEditing(null);
+                                markPlanChanged(employee.id);
                                 await load();
                               }}
                               onError={setError}

@@ -138,7 +138,7 @@ Es sind **zwei** Hooks, einer je Tabelle — beide zeigen auf dieselbe Funktion:
 | Tabelle | Ereignisse | wofür |
 |---|---|---|
 | `leave_requests` | Insert, Update | Urlaubsantrag und Entscheidung |
-| `assignments` | Insert, Update, Delete | Planänderungen an die Maler |
+| `plan_change_events` | Insert | Planänderungen an die Maler |
 
 Für beide gilt:
 
@@ -147,6 +147,13 @@ Für beide gilt:
 
 Fehlt der zweite Hook, funktioniert alles Übrige unverändert — es kommen
 lediglich keine Nachrichten über Planänderungen an.
+
+> **Auf `assignments` gehört kein Hook.** Eine frühere Fassung hing dort und
+> meldete jede einzelne Zeile. Wer noch einen hat, kann ihn löschen: Die
+> Funktion ignoriert die Tabelle inzwischen, der Aufruf liefe ins Leere.
+> Benachrichtigt wird erst, wenn das Büro die Bearbeitung mit „Fertig"
+> abschließt — dann schreibt die Wochenplanung eine Zeile nach
+> `plan_change_events`, und zwar eine je geänderter Woche.
 
 **5. Öffentlichen Schlüssel in die App bringen:**
 
