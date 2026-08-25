@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "2.6.1",
+  "version": "2.7.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "tsx src/lib/prefill.test.ts && tsx src/lib/leave.test.ts && tsx src/lib/hours.test.ts",
+    "test": "tsx src/lib/prefill.test.ts && tsx src/lib/leave.test.ts && tsx src/lib/hours.test.ts && node supabase/functions/send-push/logic.test.mjs",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",
     "version:major": "npm version major --no-git-tag-version"

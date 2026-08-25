@@ -39,7 +39,7 @@ import Logo from './components/Logo.tsx';
 import AdminPanel from './features/admin/AdminPanel.tsx';
 import WeekGrid from './features/planning/WeekGrid.tsx';
 import LeaveView from './features/leave/LeaveView.tsx';
-import PushToggle from './features/leave/PushToggle.tsx';
+import NotificationSettings from './features/notifications/NotificationSettings.tsx';
 import { useAuth } from './lib/auth.tsx';
 import { breakMinutesForRole, calculateHours, WEEKDAYS } from './lib/hours.ts';
 import {
@@ -1942,7 +1942,7 @@ export default function App() {
 
                     {currentUser && (
                       <div className="p-6">
-                        <PushToggle employeeId={currentUser.id} />
+                        <NotificationSettings employee={currentUser} />
                       </div>
                     )}
                   </div>

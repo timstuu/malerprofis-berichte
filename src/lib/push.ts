@@ -1,4 +1,5 @@
 import { supabase } from './supabase.ts';
+import type { Role } from './database.types.ts';
 
 /**
  * Push-Benachrichtigungen.
@@ -112,4 +113,80 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const output = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) output[i] = raw.charCodeAt(i);
   return output;
+}
+
+// ---------------------------------------------------------------------------
+// Welche Benachrichtigungen jemand bekommen möchte
+// ---------------------------------------------------------------------------
+
+/**
+ * Die Arten von Nachrichten, die es gibt.
+ *
+ * Dieselben Bezeichner stehen in der Edge Function und in der Prüfregel der
+ * Tabelle push_preferences — kommt eine Art dazu, müssen alle drei Stellen
+ * angefasst werden.
+ */
+export type PushKind = 'leave_submitted' | 'leave_decided' | 'plan_changed';
+
+/** Beschreibung je Art, dazu die Rolle, für die sie überhaupt vorkommt. */
+export const PUSH_KINDS: {
+  kind: PushKind;
+  title: string;
+  description: string;
+  /** `null` = für alle. Sonst nur für diese Rolle sichtbar. */
+  onlyRole: Role | null;
+}[] = [
+  {
+    kind: 'plan_changed',
+    title: 'Planänderung',
+    description: 'Wenn das Büro einen deiner Einsätze anlegt, verschiebt oder streicht.',
+    // Im Planungsraster stehen nur Maler; ein Büro-Konto bekäme das nie.
+    onlyRole: 'worker',
+  },
+  {
+    kind: 'leave_decided',
+    title: 'Urlaub entschieden',
+    description: 'Wenn dein Urlaubsantrag genehmigt oder abgelehnt wurde.',
+    onlyRole: null,
+  },
+  {
+    kind: 'leave_submitted',
+    title: 'Neuer Urlaubsantrag',
+    description: 'Wenn ein Mitarbeiter Urlaub beantragt.',
+    // Entschieden wird im Büro — nur dort ist die Nachricht sinnvoll.
+    onlyRole: 'admin',
+  },
+];
+
+/**
+ * Die abgeschalteten Arten einer Person.
+ *
+ * Gespeichert wird nur die Abweichung: Was nicht in der Antwort steht, ist an.
+ */
+export async function fetchDisabledKinds(employeeId: string): Promise<Set<PushKind>> {
+  const { data, error } = await supabase
+    .from('push_preferences')
+    .select('kind, enabled')
+    .eq('employee_id', employeeId);
+  if (error) {
+    throw new Error(`Einstellungen konnten nicht geladen werden: ${error.message}`);
+  }
+  return new Set(
+    (data ?? []).filter((row) => row.enabled === false).map((row) => row.kind as PushKind),
+  );
+}
+
+/** Schaltet eine Art für diese Person ein oder aus. */
+export async function setKindEnabled(
+  employeeId: string,
+  kind: PushKind,
+  enabled: boolean,
+): Promise<void> {
+  const { error } = await supabase.from('push_preferences').upsert(
+    { employee_id: employeeId, kind, enabled, updated_at: new Date().toISOString() },
+    { onConflict: 'employee_id,kind' },
+  );
+  if (error) {
+    throw new Error(`Einstellung konnte nicht gespeichert werden: ${error.message}`);
+  }
 }

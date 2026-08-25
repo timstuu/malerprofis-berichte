@@ -132,11 +132,21 @@ Repository.
 `SUPABASE_URL` und `SUPABASE_SERVICE_ROLE_KEY` stehen automatisch zur Verfügung
 und müssen nicht eingetragen werden.
 
-**4. Database Webhook anlegen** (Supabase → Database → Webhooks → *Create a new hook*):
+**4. Database Webhooks anlegen** (Supabase → Database → Webhooks → *Create a new hook*).
+Es sind **zwei** Hooks, einer je Tabelle — beide zeigen auf dieselbe Funktion:
 
-- Tabelle `leave_requests`, Ereignisse **Insert** und **Update**
+| Tabelle | Ereignisse | wofür |
+|---|---|---|
+| `leave_requests` | Insert, Update | Urlaubsantrag und Entscheidung |
+| `assignments` | Insert, Update, Delete | Planänderungen an die Maler |
+
+Für beide gilt:
+
 - Typ *Supabase Edge Functions*, Funktion `send-push`, Methode `POST`
 - HTTP-Header hinzufügen: `x-webhook-secret` mit dem Wert aus Schritt 3
+
+Fehlt der zweite Hook, funktioniert alles Übrige unverändert — es kommen
+lediglich keine Nachrichten über Planänderungen an.
 
 **5. Öffentlichen Schlüssel in die App bringen:**
 
@@ -147,7 +157,10 @@ und müssen nicht eingetragen werden.
   neu starten, damit der Schlüssel in den Build gelangt
 
 **6. Einschalten:** Jeder Mitarbeiter aktiviert Benachrichtigungen einmalig in den
-**Einstellungen** der App. Auf dem iPhone geht das nur in der über
+**Einstellungen** der App. Dort lässt sich außerdem jede Art einzeln abschalten
+(Planänderung, Urlaubsentscheidung, neuer Urlaubsantrag) — diese Wahl gilt für
+alle Geräte der Person, während der Schalter darüber nur das gerade benutzte
+Gerät an- oder abmeldet. Auf dem iPhone geht das nur in der über
 „Teilen → Zum Home-Bildschirm" installierten App (ab iOS 16.4) — im Safari-Tab
 existiert die Push-Funktion nicht.
 
