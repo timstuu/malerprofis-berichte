@@ -1797,18 +1797,6 @@ export default function App() {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-6"
               >
-                {/* Begrüßung. Nennt bewusst immer den heutigen Tag — unabhängig
-                    davon, durch welche Woche das Raster darunter gerade blättert. */}
-                <div className="bg-white p-6 rounded-3xl border border-[#141414]/5 shadow-sm">
-                  <h2 className="text-2xl font-bold tracking-tight mb-1 text-gray-900">
-                    Moin, {userName.firstName || currentUser?.first_name || 'Mitarbeiter'}!
-                  </h2>
-                  <p className="text-sm text-[#141414]/60">
-                    Heute ist {format(new Date(), 'EEEE', { locale: de })}, der{' '}
-                    {format(new Date(), 'd. MMMM yyyy', { locale: de })}
-                  </p>
-                </div>
-
                 <div>
                   <h2 className="text-2xl font-bold">Wochenplanung</h2>
                   <p className="text-sm text-[#141414]/50 mt-1">
@@ -1853,6 +1841,18 @@ export default function App() {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-8"
               >
+                {/* Begrüßung. Nennt den heutigen Tag, nicht den, an dem der
+                    Bericht gerade steht. */}
+                <div className="bg-white p-6 rounded-3xl border border-[#141414]/5 shadow-sm">
+                  <h2 className="text-2xl font-bold tracking-tight mb-1 text-gray-900">
+                    Moin, {userName.firstName || currentUser?.first_name || 'Mitarbeiter'}!
+                  </h2>
+                  <p className="text-sm text-[#141414]/60">
+                    Heute ist {format(new Date(), 'EEEE', { locale: de })}, der{' '}
+                    {format(new Date(), 'd. MMMM yyyy', { locale: de })}
+                  </p>
+                </div>
+
                 <h2 className="text-2xl font-bold">Einstellungen</h2>
 
                 {isAdmin && currentUser && (
