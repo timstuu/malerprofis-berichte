@@ -1246,37 +1246,6 @@ export default function App() {
                           </div>
                         </div>
 
-                        {(() => {
-                          const daysOrder = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
-                          const prevDay = index > 0 ? daysOrder[index - 1] : null;
-                          if (!prevDay) return null;
-                          return (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const prevEntries = weeklyEntries[prevDay]?.entries || [];
-                                if (prevEntries.length === 0) {
-                                  alert(`Keine Einträge für ${prevDay} vorhanden.`);
-                                  return;
-                                }
-                                const cloned = prevEntries.map(e => ({
-                                  ...e,
-                                  id: Date.now().toString() + '-' + Math.random()
-                                }));
-                                setWeeklyEntries({
-                                  ...weeklyEntries,
-                                  [day]: {
-                                    entries: [...(weeklyEntries[day]?.entries || []), ...cloned]
-                                  }
-                                });
-                              }}
-                              className="w-full p-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-bold transition-colors text-center text-xs cursor-pointer uppercase tracking-wider"
-                            >
-                              {prevDay} übernehmen
-                            </button>
-                          );
-                        })()}
-
                         <button onClick={() => {
                           const project = (document.getElementById(`proj-${day}`) as HTMLInputElement).value;
                           const projectNumber = (document.getElementById(`num-${day}`) as HTMLInputElement).value;

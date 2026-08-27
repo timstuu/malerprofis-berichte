@@ -106,29 +106,31 @@ export default function WeeklyReportsAdmin() {
     <section className="space-y-4">
       <h3 className="text-lg font-bold">Wochenberichte</h3>
 
-      <div className="bg-white rounded-3xl shadow-sm border border-[#141414]/5 overflow-hidden">
-        <div className="flex items-center justify-center gap-2 p-4 border-b border-[#141414]/5">
-          <button
-            onClick={() => setWeekStart(subWeeks(weekStart, 1))}
-            className="p-2 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer"
-            aria-label="Vorherige Woche"
-          >
-            <ChevronLeft size={18} />
-          </button>
-          <div className="text-sm font-bold min-w-[13rem] text-center">
-            KW {format(weekStart, 'I', { locale: de })} · {format(weekStart, 'dd.MM.')} –{' '}
-            {format(addDays(weekStart, 6), 'dd.MM.yyyy')}
-          </div>
-          <button
-            onClick={() => setWeekStart(addWeeks(weekStart, 1))}
-            className="p-2 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer"
-            aria-label="Nächste Woche"
-          >
-            <ChevronRight size={18} />
-          </button>
-          {loading && <Loader2 size={16} className="animate-spin text-brand-accent1" />}
+      {/* Dieselbe Wochenauswahl wie im Wochenplan: linksbündig über der Liste
+          statt als eigene Kopfzeile in der Karte. */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setWeekStart(subWeeks(weekStart, 1))}
+          className="p-2 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer"
+          aria-label="Vorherige Woche"
+        >
+          <ChevronLeft size={18} />
+        </button>
+        <div className="text-sm font-bold min-w-[13rem] text-center">
+          KW {format(weekStart, 'I', { locale: de })} · {format(weekStart, 'dd.MM.')} –{' '}
+          {format(addDays(weekStart, 6), 'dd.MM.yyyy')}
         </div>
+        <button
+          onClick={() => setWeekStart(addWeeks(weekStart, 1))}
+          className="p-2 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer"
+          aria-label="Nächste Woche"
+        >
+          <ChevronRight size={18} />
+        </button>
+        {loading && <Loader2 size={16} className="animate-spin text-brand-accent1" />}
+      </div>
 
+      <div className="bg-white rounded-3xl shadow-sm border border-[#141414]/5 overflow-hidden">
         {error && (
           <p className="m-4 text-sm text-red-600 bg-red-50/60 border border-red-100 rounded-xl p-3">
             {error}

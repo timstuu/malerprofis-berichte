@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { addDays, addWeeks, format, subWeeks } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { motion } from 'motion/react';
@@ -191,10 +191,28 @@ export default function WeekGrid({
     }
   };
 
-  const days = Array.from({ length: DAY_COUNT }, (_, i) => {
+  const allDays = Array.from({ length: DAY_COUNT }, (_, i) => {
     const date = addDays(weekStart, i);
     return { label: WEEKDAYS[i], date, iso: format(date, 'yyyy-MM-dd') };
   });
+
+  /**
+   * Der Samstag steht nur im Raster, wenn dort auch etwas steht: eine Notiz,
+   * ein Einsatz oder ein Gewerk. In den meisten Wochen ist er leer und nimmt
+   * den fünf Arbeitstagen sonst nur Breite weg.
+   *
+   * Abwesenheiten zählen bewusst nicht mit: Ein Feiertag, der auf einen Samstag
+   * fällt, öffnet die Spalte für einen Tag, an dem ohnehin niemand arbeitet.
+   *
+   * Beim Bearbeiten ist der Samstag immer da — sonst gäbe es keine Zelle, in
+   * die der erste Samstagseinsatz je gelegt werden könnte.
+   */
+  const saturday = allDays[DAY_COUNT - 1];
+  const saturdayUsed =
+    notes.some((n) => n.date === saturday.iso && n.text.trim().length > 0) ||
+    assignments.some((a) => a.date === saturday.iso) ||
+    tradeEntries.some((t) => t.date === saturday.iso);
+  const days = readOnly && !saturdayUsed ? allDays.slice(0, DAY_COUNT - 1) : allDays;
 
   const load = async () => {
     setLoading(true);
@@ -236,6 +254,31 @@ export default function WeekGrid({
   // noch am Fernseher als Zeile auf.
   // Dieselbe Reihenfolge wie in der Benutzerverwaltung und am Fernseher.
   const workers = sortEmployees(employees.filter((e) => e.active && e.role === 'worker'));
+
+  /**
+   * Breite der Namensspalte in Pixeln: so breit wie der längste Name, nicht
+   * breiter.
+   *
+   * Jede Zeile des Rasters ist ein eigenes Grid, damit eine Kachel über die
+   * Zellgrenzen hinausragen kann. `max-content` würde deshalb je Zeile eine
+   * andere Breite ergeben und die Tagesspalten gegeneinander verschieben —
+   * also wird einmal gemessen und allen Zeilen dieselbe Zahl gegeben.
+   */
+  const nameProbe = useRef<HTMLDivElement>(null);
+  const [nameWidth, setNameWidth] = useState(160);
+  const nameKey = workers.map((e) => `${e.first_name} ${e.last_name}`).join('|');
+  useLayoutEffect(() => {
+    const node = nameProbe.current;
+    if (!node) return;
+    let widest = 0;
+    for (const child of Array.from(node.children) as HTMLElement[]) {
+      // Neben dem Namen stehen Farbstreifen und Abstand, neben der Überschrift
+      // nur der Innenrand der Zelle.
+      const extra = child.dataset.slot === 'name' ? 38 : 24;
+      widest = Math.max(widest, child.getBoundingClientRect().width + extra);
+    }
+    if (widest > 0) setNameWidth(Math.ceil(widest));
+  }, [nameKey]);
 
   const noteOn = (date: string) => notes.find((n) => n.date === date)?.text ?? '';
   const hasNotes = notes.some((n) => n.text.trim().length > 0);
@@ -451,16 +494,16 @@ export default function WeekGrid({
     return null;
   };
 
-  const gridTemplate = `10rem repeat(${DAY_COUNT}, minmax(8.5rem, 1fr))`;
+  const gridTemplate = `${nameWidth}px repeat(${days.length}, minmax(8.5rem, 1fr))`;
 
-  const weekLabel = `KW ${format(weekStart, 'I', { locale: de })} · ${format(weekStart, 'dd.MM.')} – ${format(weekEnd, 'dd.MM.yyyy')}`;
+  const weekLabel = `KW ${format(weekStart, 'I', { locale: de })} · ${format(weekStart, 'dd.MM.')} – ${format(days[days.length - 1].date, 'dd.MM.yyyy')}`;
 
   return (
     <div className="space-y-4">
       {fullscreen && (
         <FullscreenPlan
           days={days}
-          dayCount={DAY_COUNT}
+          dayCount={days.length}
           workers={workers}
           tradeRows={tradeRows}
           weekLabel={weekLabel}
@@ -571,11 +614,37 @@ export default function WeekGrid({
         </p>
       )}
 
+      {/* Unsichtbare Messhilfe: liefert die Breite der Namensspalte. Sie steht
+          außerhalb des Rasters, damit sie dessen Zeilen nicht beeinflusst. */}
+      <div
+        ref={nameProbe}
+        aria-hidden
+        className="absolute -left-[9999px] top-0 invisible whitespace-nowrap"
+      >
+        {workers.flatMap((e) => [
+          <span key={`${e.id}-v`} data-slot="name" className="inline-block font-semibold text-sm leading-tight">
+            {e.first_name}
+          </span>,
+          <span key={`${e.id}-n`} data-slot="name" className="inline-block font-semibold text-sm leading-tight">
+            {e.last_name}
+          </span>,
+        ])}
+        <span data-slot="head" className="inline-block text-xs font-bold uppercase tracking-wider">
+          Mitarbeiter
+        </span>
+        <span data-slot="head" className="inline-block text-xs font-bold uppercase tracking-wider">
+          Hinweise
+        </span>
+      </div>
+
       <div className="bg-white rounded-3xl shadow-sm border border-[#141414]/5 overflow-x-auto">
         <div className="min-w-[64rem]">
           {/* Kopfzeile */}
           <div className="grid bg-gray-50/80" style={{ gridTemplateColumns: gridTemplate }}>
-            <div className="text-left text-xs font-bold uppercase tracking-wider text-gray-500 p-3">
+            {/* Die Namensspalte bleibt beim Querscrollen stehen; nur die Tage
+                wandern darunter durch. Deshalb tragen ihre Zellen eine
+                deckende Farbe — sonst schienen die Kacheln hindurch. */}
+            <div className="sticky left-0 z-20 bg-[#fafbfc] border-r border-[#141414]/5 text-left text-xs font-bold uppercase tracking-wider text-gray-500 p-3">
               Mitarbeiter
             </div>
             {days.map((day) => (
@@ -596,7 +665,7 @@ export default function WeekGrid({
               className="grid border-t border-[#141414]/5 bg-amber-50/40"
               style={{ gridTemplateColumns: gridTemplate }}
             >
-              <div className="p-3 flex items-center">
+              <div className="sticky left-0 z-20 bg-[#fffdf7] border-r border-[#141414]/5 p-3 flex items-center">
                 <p className="text-xs font-bold uppercase tracking-wider text-amber-700/70">
                   Hinweise
                 </p>
@@ -637,7 +706,11 @@ export default function WeekGrid({
                 }`}
                 style={{ gridTemplateColumns: gridTemplate }}
               >
-                <div className="p-3 flex items-start gap-2">
+                <div
+                  className={`sticky left-0 z-20 border-r border-[#141414]/5 p-3 flex items-start gap-2 ${
+                    employee.id === currentEmployeeId ? 'bg-[#f5f9fb]' : 'bg-white'
+                  }`}
+                >
                   <span
                     className="w-1.5 self-stretch rounded-full shrink-0"
                     style={{ backgroundColor: color.swatch }}
@@ -762,7 +835,7 @@ export default function WeekGrid({
               className="grid border-t border-[#141414]/5 bg-gray-50/40"
               style={{ gridTemplateColumns: gridTemplate }}
             >
-              <div className="p-3 flex items-start gap-2">
+              <div className="sticky left-0 z-20 bg-[#fdfdfd] border-r border-[#141414]/5 p-3 flex items-start gap-2">
                 <Wrench size={14} className="text-gray-400 shrink-0 mt-0.5" />
                 <div className="min-w-0 flex-1">
                   {readOnly ? (

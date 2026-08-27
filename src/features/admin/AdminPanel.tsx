@@ -168,9 +168,10 @@ export default function AdminPanel({
                 </p>
                 {site.customer && <p className="text-xs text-gray-500 mt-0.5">{site.customer}</p>}
               </div>
-              {site.is_absence_code ? (
-                <span className="text-[10px] font-bold uppercase text-gray-400">Abwesenheit</span>
-              ) : (
+              {/* Abwesenheitscodes bleiben unantastbar: Ihre Nummern stecken
+                  fest im Code der Planung und im Urlaubskonto. Sie bekommen
+                  deshalb keine Knöpfe — die Zeile bleibt einfach ruhig. */}
+              {!site.is_absence_code && (
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => editSite(site)}
