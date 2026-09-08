@@ -7,11 +7,10 @@ coverage/
 .env*
 !.env.example
 
-# Schützt die PWA-Icons vor dem Überschreiben durch KI-Syncs
-public/apple-touch-icon.png
-public/icon-192x192.png
-public/icon-512x512.png
-public/logo.png
+# Schützt die PWA-Icons vor dem Überschreiben durch KI-Syncs.
+# Die Dateien sind im Repo eingecheckt; die Regel greift nur gegen Syncs, die
+# sie neu schreiben wollen. Ein neues Icon braucht deshalb `git add -f`.
+public/icons/
 .antigravity/
 metadata.json
 .claude/settings.local.json

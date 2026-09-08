@@ -5,7 +5,7 @@
 export function Logo({ className }: { className?: string }) {
   return (
     <img
-      src={`${import.meta.env.BASE_URL}logo.png?v=${__APP_VERSION__}`}
+      src={`${import.meta.env.BASE_URL}icons/logo.png?v=${__APP_VERSION__}`}
       alt="Malerprofis Uderstadt Logo"
       className={className}
     />

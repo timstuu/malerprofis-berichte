@@ -16,7 +16,7 @@ self.addEventListener('push', (event) => {
   }
 
   const title = payload.title || 'Malerprofis Uderstadt';
-  const icon = new URL('icon-192x192.png', self.registration.scope).href;
+  const icon = new URL('icons/android-icon-192x192.png', self.registration.scope).href;
 
   event.waitUntil(
     self.registration.showNotification(title, {

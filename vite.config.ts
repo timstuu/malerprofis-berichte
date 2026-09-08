@@ -26,7 +26,7 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon-192x192.png', 'icon-512x512.png', 'apple-touch-icon.png', 'logo.png'],
+        includeAssets: ['icons/*.png'],
         workbox: {
           // Eigener Push-Handler, an den generierten Service Worker angehängt.
           // So bleibt die Caching-Strategie unverändert.
@@ -41,24 +41,21 @@ export default defineConfig(({mode}) => {
           display: 'standalone',
           orientation: 'portrait',
           start_url: '.',
+          // Ohne führenden Schrägstrich: Die Pfade gelten ab der Datei
+          // manifest.webmanifest und treffen damit auch unter
+          // /malerprofis-berichte/ das richtige Verzeichnis.
           icons: [
             {
-              src: 'icon-192x192.png',
+              src: 'icons/android-icon-192x192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any'
             },
             {
-              src: 'icon-192x192.png',
+              src: 'icons/android-icon-192x192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'maskable'
-            },
-            {
-              src: 'icon-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any'
             }
           ]
         }
