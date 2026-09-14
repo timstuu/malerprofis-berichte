@@ -56,14 +56,22 @@ export function parseEuro(text: string): number | null {
   return Math.round(Number(normalized) * 100);
 }
 
-/** 123456 → „1.234,56 €“ */
-export function formatEuro(cents: number): string {
+/**
+ * 123456 → „1.234,56“ — ohne Eurozeichen, so wie in den Spalten der
+ * Excel-Vorlage und im PDF, dessen Standardschrift das Zeichen nicht sicher trägt.
+ */
+export function formatAmount(cents: number): string {
   const abs = Math.abs(Math.round(cents));
   const euros = Math.floor(abs / 100)
     .toString()
     .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   const rest = String(abs % 100).padStart(2, '0');
-  return `${cents < 0 ? '-' : ''}${euros},${rest} €`;
+  return `${cents < 0 ? '-' : ''}${euros},${rest}`;
+}
+
+/** 123456 → „1.234,56 €“ */
+export function formatEuro(cents: number): string {
+  return `${formatAmount(cents)} €`;
 }
 
 /** 3499 → „34,99“ — zum Vorbelegen eines Eingabefelds. */

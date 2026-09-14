@@ -36,6 +36,9 @@ Daten liegt vollständig in den Row-Level-Security-Regeln der Datenbank.
    - `0014_expenses.sql` — Auslagen: Belege mit Fotos, Monatsabschlüsse und
      der private Bucket `auslagen`. Fehlt sie, zeigt der Reiter „Auslagen“
      eine Fehlermeldung; der Rest der App läuft weiter
+   - `0015_expense_settlement_rpc.sql` — Monatsabschluss und Zurücknehmen der
+     Auslagen als Datenbankfunktionen, die Summe und Sperre in einem Zug prüfen.
+     Braucht `0014_expenses.sql`
 3. Unter **Project Settings → API** die Projekt-URL und den `anon`-Key notieren.
 
 ### 2. Zugangsdaten hinterlegen

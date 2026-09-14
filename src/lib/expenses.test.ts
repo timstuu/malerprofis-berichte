@@ -6,6 +6,7 @@
  */
 import {
   expenseFileName,
+  formatAmount,
   formatEuro,
   initials,
   numberReceipts,
@@ -45,6 +46,8 @@ check('drei Nachkommastellen', parseEuro('1,234'), null);
 check('leer', parseEuro(''), null);
 check('Anzeige mit Tausenderpunkt', formatEuro(123456), '1.234,56 €');
 check('Anzeige unter einem Euro', formatEuro(5), '0,05 €');
+check('Betrag fürs PDF ohne Eurozeichen', formatAmount(3499), '34,99');
+check('negativer Rest', formatAmount(-93), '-0,93');
 
 // --- Welche Steuer gespeichert wird ----------------------------------------
 

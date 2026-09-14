@@ -67,10 +67,11 @@ async function loadLogo(): Promise<HTMLImageElement | null> {
   }
 }
 
-/** Baut das PDF und gibt es als Blob zurück. */
-export async function buildWeeklyReportPdf(data: ReportPdfData): Promise<Blob> {
-  const doc = new jsPDF();
-
+/**
+ * Firmenkopf oben auf der ersten Seite: Anschrift links, Logo rechts.
+ * Gemeinsam für alle PDFs, die im Büro entstehen.
+ */
+export async function drawLetterhead(doc: jsPDF): Promise<void> {
   doc.setFontSize(10);
   doc.text('Malermeister Uderstadt GmbH', 20, 15);
   doc.text('Luisenweg 7, 20537 Hamburg', 20, 20);
@@ -97,6 +98,13 @@ export async function buildWeeklyReportPdf(data: ReportPdfData): Promise<Blob> {
     doc.text('Malerprofis', 150, 20);
     doc.setFontSize(10);
   }
+}
+
+/** Baut das PDF und gibt es als Blob zurück. */
+export async function buildWeeklyReportPdf(data: ReportPdfData): Promise<Blob> {
+  const doc = new jsPDF();
+
+  await drawLetterhead(doc);
 
   doc.setFontSize(16);
   doc.text('Wochenbericht', 20, 40);

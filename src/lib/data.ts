@@ -5,6 +5,7 @@ import type {
   Assignment,
   DefaultHours,
   Employee,
+  ExpensePayout,
   ExpenseReceipt,
   ExpenseSettlement,
   Holiday,
@@ -943,7 +944,7 @@ export async function deleteExpenseReceipt(receipt: ExpenseReceipt): Promise<voi
  * darf — beim Büro also die ganze Mannschaft.
  */
 export async function fetchExpenseReceipts(
-  options: { employeeId?: string; openOnly?: boolean } = {},
+  options: { employeeId?: string; openOnly?: boolean; settlementId?: string } = {},
 ): Promise<ExpenseReceiptRow[]> {
   let query = supabase
     .from('expense_receipts')
@@ -952,6 +953,7 @@ export async function fetchExpenseReceipts(
     .order('created_at', { ascending: true });
   if (options.employeeId) query = query.eq('employee_id', options.employeeId);
   if (options.openOnly) query = query.is('settlement_id', null);
+  if (options.settlementId) query = query.eq('settlement_id', options.settlementId);
 
   const result = await query;
   return unwrap<ExpenseReceiptRow[]>(
@@ -960,17 +962,22 @@ export async function fetchExpenseReceipts(
   );
 }
 
+/** Abschluss mit dem Namen seines Mitarbeiters. */
+export interface ExpenseSettlementRow extends ExpenseSettlement {
+  employees: { first_name: string; last_name: string } | null;
+}
+
 /** Monatsabschlüsse, neueste zuerst. */
-export async function fetchExpenseSettlements(employeeId?: string): Promise<ExpenseSettlement[]> {
+export async function fetchExpenseSettlements(employeeId?: string): Promise<ExpenseSettlementRow[]> {
   let query = supabase
     .from('expense_settlements')
-    .select('*')
+    .select('*, employees(first_name, last_name)')
     .order('month', { ascending: false });
   if (employeeId) query = query.eq('employee_id', employeeId);
 
   const result = await query;
-  return unwrap<ExpenseSettlement[]>(
-    result as unknown as { data: ExpenseSettlement[] | null; error: { message: string } | null },
+  return unwrap<ExpenseSettlementRow[]>(
+    result as unknown as { data: ExpenseSettlementRow[] | null; error: { message: string } | null },
     'Abrechnungen',
   );
 }
@@ -990,4 +997,46 @@ export async function receiptPhotoUrls(paths: string[]): Promise<Record<string, 
     if (item.path && item.signedUrl) urls[item.path] = item.signedUrl;
   }
   return urls;
+}
+
+/** Ein Belegfoto als Datei — fürs PDF, das die Bilder selbst einbettet. */
+export async function downloadReceiptPhoto(path: string): Promise<Blob> {
+  const { data, error } = await supabase.storage.from(RECEIPT_BUCKET).download(path);
+  if (error || !data) {
+    throw new Error(`Belegfoto konnte nicht geladen werden: ${error?.message ?? 'unbekannter Fehler'}`);
+  }
+  return data;
+}
+
+/**
+ * Schließt die übergebenen Belege eines Mitarbeiters ab. Summe, Sperre und
+ * Verknüpfung prüft die Datenbank in einem Zug (0015_expense_settlement_rpc.sql).
+ */
+export async function closeExpenseSettlement(input: {
+  employeeId: string;
+  /** yyyy-MM-01 */
+  month: string;
+  settledOn: string;
+  receiptIds: string[];
+  payouts: ExpensePayout[];
+}): Promise<string> {
+  const { data, error } = await supabase.rpc('close_expense_settlement', {
+    p_employee: input.employeeId,
+    p_month: input.month,
+    p_settled_on: input.settledOn,
+    p_receipt_ids: input.receiptIds,
+    p_payouts: input.payouts,
+  });
+  if (error) {
+    throw new Error(`Abrechnung konnte nicht erstellt werden: ${error.message}`);
+  }
+  return data as string;
+}
+
+/** Nimmt einen Abschluss zurück; seine Belege sind danach wieder offen. */
+export async function reopenExpenseSettlement(id: string): Promise<void> {
+  const { error } = await supabase.rpc('reopen_expense_settlement', { p_id: id });
+  if (error) {
+    throw new Error(`Abrechnung konnte nicht zurückgenommen werden: ${error.message}`);
+  }
 }
