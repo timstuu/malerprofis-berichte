@@ -810,6 +810,11 @@ export interface ExpenseReceiptInput {
   grossCents: number;
   vat7Cents: number;
   vat19Cents: number;
+  /** Nur bei Bewirtung, sonst null. */
+  entertainmentGuests: string | null;
+  entertainmentOccasion: string | null;
+  /** Unterschrift des Mitarbeiters als base64-PNG. */
+  entertainmentSignature: string | null;
 }
 
 /** Ein Foto mit dem Pfad, unter dem es im Bucket landen soll. */
@@ -861,6 +866,10 @@ function receiptColumns(input: ExpenseReceiptInput) {
     gross: input.grossCents / 100,
     vat7: input.vat7Cents / 100,
     vat19: input.vat19Cents / 100,
+    // `?? null`: Ein Beleg, der schon vor diesen Feldern im Puffer lag, hat sie nicht.
+    entertainment_guests: input.entertainmentGuests ?? null,
+    entertainment_occasion: input.entertainmentOccasion ?? null,
+    entertainment_signature: input.entertainmentSignature ?? null,
   };
 }
 

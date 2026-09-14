@@ -172,6 +172,11 @@ export interface ExpenseReceipt {
   vat7: number;
   vat19: number;
   photo_paths: string[];
+  /** Nur bei der Art „Bewirtung“ gefüllt. */
+  entertainment_guests: string | null;
+  entertainment_occasion: string | null;
+  /** Unterschrift des Mitarbeiters als base64-PNG. */
+  entertainment_signature: string | null;
   settlement_id: string | null;
   created_at: string;
   updated_at: string;

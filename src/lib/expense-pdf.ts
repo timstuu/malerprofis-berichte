@@ -6,6 +6,7 @@ import {
   expenseFileName,
   formatAmount,
   initials,
+  isEntertainment,
   numberReceipts,
   payoutLabel,
   restCents,
@@ -65,6 +66,38 @@ function drawPhoto(doc: jsPDF, dataUrl: string, x: number, y: number, maxWidth: 
   }
   const type = dataUrl.startsWith('data:image/png') ? 'PNG' : 'JPEG';
   doc.addImage(dataUrl, type, x + (maxWidth - width) / 2, y, width, height);
+}
+
+/**
+ * Die Angaben des Bewirtungsbelegs über den Fotos: Personen, Anlass,
+ * Unterschrift. Ort, Datum und Betrag stehen schon in der Kopfzeile der Seite.
+ * Gibt zurück, wo darunter die Fotos anfangen dürfen.
+ */
+function drawEntertainment(doc: jsPDF, receipt: ExpenseReceipt, top: number): number {
+  const width = PAGE_WIDTH - 2 * MARGIN;
+  let y = top;
+  doc.setFontSize(11);
+  doc.text('Angaben zur Bewirtung', MARGIN, y);
+  y += 6;
+  doc.setFontSize(10);
+  const fields: [string, string | null][] = [
+    ['Bewirtete Personen', receipt.entertainment_guests],
+    ['Anlass', receipt.entertainment_occasion],
+  ];
+  for (const [label, value] of fields) {
+    const lines = doc.splitTextToSize(`${label}: ${value?.trim() || '-'}`, width) as string[];
+    doc.text(lines, MARGIN, y);
+    y += lines.length * 4.5 + 1.5;
+  }
+  doc.text('Unterschrift Mitarbeiter:', MARGIN, y);
+  if (receipt.entertainment_signature) {
+    try {
+      doc.addImage(receipt.entertainment_signature, 'PNG', MARGIN, y + 2, 50, 20);
+    } catch (error) {
+      console.error('Unterschrift konnte nicht ins PDF:', error);
+    }
+  }
+  return y + 30;
 }
 
 function finalY(doc: jsPDF): number {
@@ -159,11 +192,14 @@ export async function buildExpensePdf(data: ExpensePdfData): Promise<Blob> {
         { maxWidth: PAGE_WIDTH - 2 * MARGIN },
       );
 
+      // Die Bewirtungsangaben gehören auf die erste Seite des Belegs.
+      const photoTop =
+        page === 0 && isEntertainment(receipt.category) ? drawEntertainment(doc, receipt, PHOTO_TOP) : PHOTO_TOP;
       const onPage = paths.slice(page * PHOTOS_PER_PAGE, (page + 1) * PHOTOS_PER_PAGE);
       const slotHeight =
-        (PHOTO_BOTTOM - PHOTO_TOP - PHOTO_GAP * Math.max(0, onPage.length - 1)) / Math.max(1, onPage.length);
+        (PHOTO_BOTTOM - photoTop - PHOTO_GAP * Math.max(0, onPage.length - 1)) / Math.max(1, onPage.length);
       onPage.forEach((path, i) => {
-        const y = PHOTO_TOP + i * (slotHeight + PHOTO_GAP);
+        const y = photoTop + i * (slotHeight + PHOTO_GAP);
         const dataUrl = data.photos[path];
         try {
           if (!dataUrl) throw new Error(`Foto ${path} fehlt`);

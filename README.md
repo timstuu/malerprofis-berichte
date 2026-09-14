@@ -39,6 +39,8 @@ Daten liegt vollständig in den Row-Level-Security-Regeln der Datenbank.
    - `0015_expense_settlement_rpc.sql` — Monatsabschluss und Zurücknehmen der
      Auslagen als Datenbankfunktionen, die Summe und Sperre in einem Zug prüfen.
      Braucht `0014_expenses.sql`
+   - `0016_expense_entertainment.sql` — Angaben zu Bewirtungsbelegen
+     (bewirtete Personen, Anlass, Unterschrift). Braucht `0014_expenses.sql`
 3. Unter **Project Settings → API** die Projekt-URL und den `anon`-Key notieren.
 
 ### 2. Zugangsdaten hinterlegen

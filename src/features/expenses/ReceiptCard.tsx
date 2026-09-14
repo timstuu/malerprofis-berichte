@@ -13,6 +13,8 @@ export interface ReceiptCardData {
   vat7: number | string;
   vat19: number | string;
   photo_paths: string[];
+  entertainment_guests?: string | null;
+  entertainment_occasion?: string | null;
 }
 
 function vatText(receipt: ReceiptCardData): string {
@@ -79,6 +81,14 @@ export default function ReceiptCard({
       <div className="flex items-baseline justify-between gap-3 pr-16">
         <p className="text-[#141414] font-medium text-sm leading-snug">{receipt.vendor}</p>
       </div>
+      {(receipt.entertainment_guests || receipt.entertainment_occasion) && (
+        <div className="bg-white/60 p-2.5 rounded-xl border border-gray-100 text-xs text-gray-600 space-y-0.5">
+          {receipt.entertainment_occasion && <p>Anlass: {receipt.entertainment_occasion}</p>}
+          {receipt.entertainment_guests && (
+            <p className="whitespace-pre-wrap">Personen: {receipt.entertainment_guests}</p>
+          )}
+        </div>
+      )}
       <div className="flex items-baseline justify-between gap-3">
         <p className="text-[11px] text-gray-500 font-medium">{vatText(receipt)}</p>
         <p className="text-brand-accent2 font-bold text-sm whitespace-nowrap">

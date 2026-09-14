@@ -337,6 +337,9 @@ export default function ExpensesAdmin({ currentUserId }: { currentUserId: string
         grossCents: result.grossCents,
         vat7Cents: result.vat7Cents,
         vat19Cents: result.vat19Cents,
+        entertainmentGuests: result.entertainmentGuests,
+        entertainmentOccasion: result.entertainmentOccasion,
+        entertainmentSignature: result.entertainmentSignature,
       },
       result.keptPaths,
       photos,
@@ -475,6 +478,7 @@ export default function ExpensesAdmin({ currentUserId }: { currentUserId: string
                         submitLabel="Übernehmen"
                         initial={receipt}
                         photoUrls={photoUrls}
+                        canSign={receipt.employee_id === currentUserId}
                         onCancel={() => setEditId(null)}
                         onSubmit={(result) => handleUpdate(receipt, result)}
                       />

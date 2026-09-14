@@ -37,6 +37,9 @@ function inputFrom(result: ReceiptFormResult, id: string, employeeId: string): E
     grossCents: result.grossCents,
     vat7Cents: result.vat7Cents,
     vat19Cents: result.vat19Cents,
+    entertainmentGuests: result.entertainmentGuests,
+    entertainmentOccasion: result.entertainmentOccasion,
+    entertainmentSignature: result.entertainmentSignature,
   };
 }
 
@@ -215,6 +218,8 @@ export default function ExpensesView({
               vat7: entry.input.vat7Cents / 100,
               vat19: entry.input.vat19Cents / 100,
               photo_paths: entry.photos.map((p) => p.path),
+              entertainment_guests: entry.input.entertainmentGuests,
+              entertainment_occasion: entry.input.entertainmentOccasion,
             }}
             onDelete={() => handleDiscard(entry)}
           />

@@ -25,17 +25,35 @@ export function payoutLabel(kind: PayoutKind): string {
   return PAYOUT_KINDS.find((k) => k.kind === kind)?.label ?? kind;
 }
 
+/** Die Art, bei der zusätzlich die Angaben eines Bewirtungsbelegs nötig sind. */
+export const ENTERTAINMENT_CATEGORY = 'Bewirtung';
+
 /** Vorschläge zum Antippen. Frei tippen bleibt immer möglich. */
 export const CATEGORY_SUGGESTIONS = [
-  'Material',
-  'Werkzeug',
+  'Werkzeug/Baumaterial',
   'Tanken',
   'Parken',
-  'Bewirtung/Kaffee Büro',
-  'Mitarbeiter-Geschenk',
-  'Porto',
-  'Sonstiges',
+  'Büro Bedarf',
+  ENTERTAINMENT_CATEGORY,
 ];
+
+/**
+ * Ist das eine Bewirtung? Auch von Hand getippt und unabhängig von der
+ * Schreibweise — sonst entginge ein „bewirtung“ dem Zusatzformular.
+ */
+export function isEntertainment(category: string): boolean {
+  return category.trim().toLowerCase() === ENTERTAINMENT_CATEGORY.toLowerCase();
+}
+
+/** Ab diesem Betrag reicht ein Kassenbon nicht mehr. */
+export const COMPANY_INVOICE_FROM_CENTS = 25000;
+export const COMPANY_INVOICE_HINT =
+  'Ab einem Betrag von 250,00€ muss eine Rechnung mit Firmenanschrift eingereicht werden!';
+
+/** Nur ein Hinweis — gespeichert werden darf der Beleg trotzdem. */
+export function needsCompanyInvoice(grossCents: number | null): boolean {
+  return grossCents !== null && grossCents >= COMPANY_INVOICE_FROM_CENTS;
+}
 
 /** Euro aus der Datenbank (Zahl oder Text) in Cent. */
 export function toCents(value: number | string | null | undefined): number {
@@ -118,6 +136,10 @@ export interface ReceiptDraft {
   vat7Cents: number | null;
   vat19Cents: number | null;
   photoCount: number;
+  /** Nur bei Bewirtung geprüft. */
+  entertainmentGuests: string;
+  entertainmentOccasion: string;
+  hasSignature: boolean;
 }
 
 /** Was an einem Beleg noch fehlt. Leere Liste = speicherbar. */
@@ -139,6 +161,11 @@ export function validateReceipt(draft: ReceiptDraft, today: string): string[] {
     } else if (draft.grossCents && draft.vat7Cents + draft.vat19Cents >= draft.grossCents) {
       problems.push('Die Steuerbeträge sind zusammen größer als der Bruttobetrag.');
     }
+  }
+  if (isEntertainment(draft.category)) {
+    if (!draft.entertainmentGuests.trim()) problems.push('Bitte die bewirteten Personen eintragen.');
+    if (!draft.entertainmentOccasion.trim()) problems.push('Bitte den Anlass der Bewirtung angeben.');
+    if (!draft.hasSignature) problems.push('Bitte die Bewirtung unterschreiben.');
   }
   if (draft.photoCount < 1) problems.push('Bitte mindestens ein Foto vom Beleg aufnehmen.');
   return problems;

@@ -9,6 +9,8 @@ import {
   formatAmount,
   formatEuro,
   initials,
+  isEntertainment,
+  needsCompanyInvoice,
   numberReceipts,
   parseEuro,
   receiptVat,
@@ -67,6 +69,9 @@ const rewe: ReceiptDraft = {
   vat7Cents: 170,
   vat19Cents: 80,
   photoCount: 1,
+  entertainmentGuests: '',
+  entertainmentOccasion: '',
+  hasSignature: false,
 };
 check('gültiger gemischter Beleg', validateReceipt(rewe, today), []);
 check('gemischt ohne 19 %', validateReceipt({ ...rewe, vat19Cents: null }, today).length, 1);
@@ -77,6 +82,37 @@ check('ohne Foto', validateReceipt({ ...rewe, photoCount: 0 }, today).length, 1)
 check('Datum in der Zukunft', validateReceipt({ ...rewe, receiptDate: '2026-09-15' }, today).length, 1);
 check('Datum heute', validateReceipt({ ...rewe, receiptDate: today }, today), []);
 check('ohne Betrag', validateReceipt({ ...rewe, grossCents: null, vatMode: 'none' }, today).length, 1);
+
+// --- Bewirtung --------------------------------------------------------------
+
+check('Bewirtung erkannt', isEntertainment('Bewirtung'), true);
+check('Bewirtung von Hand getippt', isEntertainment(' bewirtung '), true);
+check('alte Art ist keine Bewirtung', isEntertainment('Bewirtung/Kaffee Büro'), false);
+check(
+  'Bewirtung ohne Zusatzangaben',
+  validateReceipt({ ...rewe, category: 'Bewirtung' }, today).length,
+  3,
+);
+check(
+  'Bewirtung vollständig',
+  validateReceipt(
+    {
+      ...rewe,
+      category: 'Bewirtung',
+      entertainmentGuests: 'Tim Stumpenhagen, Herr Meier (Kunde)',
+      entertainmentOccasion: 'Baubesprechung Luisenweg',
+      hasSignature: true,
+    },
+    today,
+  ),
+  [],
+);
+
+// --- Rechnung mit Firmenanschrift ab 250 € ----------------------------------
+
+check('249,99 € ohne Hinweis', needsCompanyInvoice(24999), false);
+check('250,00 € mit Hinweis', needsCompanyInvoice(25000), true);
+check('kein Betrag ohne Hinweis', needsCompanyInvoice(null), false);
 
 // --- Nummerierung, Summe, Rest ----------------------------------------------
 

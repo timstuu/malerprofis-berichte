@@ -1,12 +1,16 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { format } from 'date-fns';
-import { Camera, Loader2, X } from 'lucide-react';
+import { Camera, Loader2, RotateCcw, X } from 'lucide-react';
+import SignatureCanvas from 'react-signature-canvas';
 import { shrinkPhoto } from '../../lib/abnahme.ts';
 import {
   CATEGORY_SUGGESTIONS,
+  COMPANY_INVOICE_HINT,
   VAT_MODES,
   centsToInput,
   formatEuro,
+  isEntertainment,
+  needsCompanyInvoice,
   parseEuro,
   receiptVat,
   toCents,
@@ -23,6 +27,10 @@ export interface ReceiptFormResult {
   grossCents: number;
   vat7Cents: number;
   vat19Cents: number;
+  /** Nur bei Bewirtung, sonst null. */
+  entertainmentGuests: string | null;
+  entertainmentOccasion: string | null;
+  entertainmentSignature: string | null;
   /** Bereits hochgeladene Fotos, die bleiben. */
   keptPaths: string[];
   /** Neu aufgenommene Fotos, schon verkleinert. */
@@ -56,12 +64,16 @@ const labelClass = 'text-[11px] font-semibold text-[#141414]/40 uppercase tracki
  * bei „7 % + 19 %“ werden beide Beträge vom Beleg abgetippt, weil sich die
  * Aufteilung aus dem Brutto nicht ergibt.
  *
+ * Bei der Art „Bewirtung“ kommen die Angaben des bisherigen Papierformulars
+ * dazu: bewirtete Personen, Anlass und die Unterschrift des Mitarbeiters.
+ *
  * Wirft `onSubmit` einen Fehler, bleibt das Formular mit allen Eingaben
  * stehen und zeigt die Meldung.
  */
 export default function ReceiptForm({
   initial,
   photoUrls = {},
+  canSign = true,
   title,
   submitLabel,
   onCancel,
@@ -70,6 +82,11 @@ export default function ReceiptForm({
   initial?: ExpenseReceipt;
   /** Signierte Adressen der bereits gespeicherten Fotos. */
   photoUrls?: Record<string, string>;
+  /**
+   * Darf hier unterschrieben werden? Nur der Mitarbeiter selbst — bearbeitet
+   * das Büro einen fremden Beleg, bleibt dessen Unterschrift, wie sie ist.
+   */
+  canSign?: boolean;
   title: string;
   submitLabel: string;
   onCancel: () => void;
@@ -83,6 +100,12 @@ export default function ReceiptForm({
   const [gross, setGross] = useState(initial ? centsToInput(toCents(initial.gross)) : '');
   const [vat7, setVat7] = useState(initial?.vat_mode === 'mixed' ? centsToInput(toCents(initial.vat7)) : '');
   const [vat19, setVat19] = useState(initial?.vat_mode === 'mixed' ? centsToInput(toCents(initial.vat19)) : '');
+  const [guests, setGuests] = useState(initial?.entertainment_guests ?? '');
+  const [occasion, setOccasion] = useState(initial?.entertainment_occasion ?? '');
+  /** Die schon gespeicherte Unterschrift, solange niemand neu unterschreibt. */
+  const [keptSignature, setKeptSignature] = useState<string | null>(initial?.entertainment_signature ?? null);
+  const [drawnSignature, setDrawnSignature] = useState<string | null>(null);
+  const sigCanvas = useRef<SignatureCanvas>(null);
   const [keptPaths, setKeptPaths] = useState<string[]>(initial?.photo_paths ?? []);
   const [newPhotos, setNewPhotos] = useState<NewPhoto[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
@@ -92,6 +115,8 @@ export default function ReceiptForm({
   const grossCents = parseEuro(gross);
   const computedVat =
     grossCents && (vatMode === '7' || vatMode === '19') ? receiptVat(vatMode, grossCents, 0, 0) : null;
+  const entertainment = isEntertainment(category);
+  const signature = keptSignature ?? drawnSignature;
 
   const addPhotos = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -115,6 +140,11 @@ export default function ReceiptForm({
     }
   };
 
+  const clearSignature = () => {
+    sigCanvas.current?.clear();
+    setDrawnSignature(null);
+  };
+
   const submit = async () => {
     const vat7Cents = parseEuro(vat7);
     const vat19Cents = parseEuro(vat19);
@@ -128,6 +158,9 @@ export default function ReceiptForm({
         vat7Cents,
         vat19Cents,
         photoCount: keptPaths.length + newPhotos.length,
+        entertainmentGuests: guests,
+        entertainmentOccasion: occasion,
+        hasSignature: !!signature,
       },
       today,
     );
@@ -146,6 +179,11 @@ export default function ReceiptForm({
         grossCents,
         vat7Cents: vat.vat7,
         vat19Cents: vat.vat19,
+        // Wird die Art von Bewirtung auf etwas anderes geändert, fallen die
+        // Angaben weg, statt unsichtbar am Beleg hängen zu bleiben.
+        entertainmentGuests: entertainment ? guests.trim() : null,
+        entertainmentOccasion: entertainment ? occasion.trim() : null,
+        entertainmentSignature: entertainment ? signature : null,
         keptPaths,
         newPhotos: blobs,
         removedPaths: (initial?.photo_paths ?? []).filter((p) => !keptPaths.includes(p)),
@@ -211,6 +249,73 @@ export default function ReceiptForm({
         </div>
       </div>
 
+      {entertainment && (
+        <div className="space-y-3 bg-brand-accent1/5 border border-brand-accent1/15 rounded-2xl p-4">
+          <p className="text-sm font-bold text-[#141414]">Angaben zur Bewirtung</p>
+          <div>
+            <label className={labelClass}>Bewirtete Personen</label>
+            <textarea
+              value={guests}
+              onChange={(e) => setGuests(e.target.value)}
+              placeholder="Namen aller Teilnehmer, auch dein eigener"
+              className={`${inputClass} h-20 bg-white`}
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Anlass der Bewirtung</label>
+            <input
+              type="text"
+              value={occasion}
+              onChange={(e) => setOccasion(e.target.value)}
+              placeholder="z. B. Baubesprechung mit Kunde"
+              className={`${inputClass} bg-white`}
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Unterschrift des Mitarbeiters</label>
+            {keptSignature ? (
+              <div className="flex items-end gap-3">
+                <img
+                  src={keptSignature}
+                  alt="Unterschrift"
+                  className="h-20 bg-white border border-gray-200 rounded-xl"
+                />
+                {canSign && (
+                  <button
+                    type="button"
+                    onClick={() => setKeptSignature(null)}
+                    className="text-xs font-bold text-brand-accent1 hover:underline cursor-pointer"
+                  >
+                    Neu unterschreiben
+                  </button>
+                )}
+              </div>
+            ) : canSign ? (
+              <div className="relative border rounded-xl overflow-hidden bg-white">
+                <SignatureCanvas
+                  ref={sigCanvas}
+                  canvasProps={{ className: 'w-full h-36 cursor-crosshair' }}
+                  onEnd={() => setDrawnSignature(sigCanvas.current?.getCanvas().toDataURL('image/png') ?? null)}
+                />
+                <button
+                  type="button"
+                  onClick={clearSignature}
+                  className="absolute top-2 right-2 bg-white/80 hover:bg-white text-gray-600 hover:text-red-500 p-2 rounded-xl shadow-sm border border-[#141414]/5 cursor-pointer"
+                  title="Unterschrift zurücksetzen"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-xl p-2.5">
+                Die Unterschrift kann nur der Mitarbeiter selbst leisten. Er muss den Beleg dafür
+                in seinem Reiter „Auslagen“ bearbeiten.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       <div>
         <label className={labelClass}>Brutto gesamt (€)</label>
         <input
@@ -221,6 +326,11 @@ export default function ReceiptForm({
           placeholder="z. B. 34,99"
           className={inputClass}
         />
+        {needsCompanyInvoice(grossCents) && (
+          <p className="text-xs font-medium text-amber-800 bg-amber-50 border border-amber-100 rounded-xl p-2.5 mt-2">
+            {COMPANY_INVOICE_HINT}
+          </p>
+        )}
       </div>
 
       <div>
