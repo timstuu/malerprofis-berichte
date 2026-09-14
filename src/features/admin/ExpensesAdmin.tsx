@@ -27,7 +27,7 @@ import {
 } from '../../lib/expenses.ts';
 import type { PayoutKind } from '../../lib/database.types.ts';
 import ReceiptCard from '../expenses/ReceiptCard.tsx';
-import ReceiptForm, { type ReceiptFormResult } from '../expenses/ReceiptForm.tsx';
+import ReceiptForm, { dateInputClass, type ReceiptFormResult } from '../expenses/ReceiptForm.tsx';
 
 interface EmployeeGroup {
   employeeId: string;
@@ -114,14 +114,26 @@ function SettlementDialog({
           <p className="text-sm text-gray-500">{group.name}</p>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
+        {/* Am Handy untereinander: Nebeneinander sind Monats- und Datumsfeld
+            in Safari breiter als die halbe Spalte und schieben sich übereinander. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="min-w-0">
             <label className={labelClass}>Abrechnungsmonat</label>
-            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={inputClass} />
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className={`${inputClass} ${dateInputClass}`}
+            />
           </div>
-          <div>
+          <div className="min-w-0">
             <label className={labelClass}>Datum</label>
-            <input type="date" value={settledOn} onChange={(e) => setSettledOn(e.target.value)} className={inputClass} />
+            <input
+              type="date"
+              value={settledOn}
+              onChange={(e) => setSettledOn(e.target.value)}
+              className={`${inputClass} ${dateInputClass}`}
+            />
           </div>
         </div>
         {monthTaken && (
@@ -153,12 +165,17 @@ function SettlementDialog({
         <div className="space-y-2">
           <p className={labelClass}>Auszahlung</p>
           {lines.map((line, i) => (
-            <div key={line.key} className="grid grid-cols-[1fr_1fr_6rem_auto] gap-2 items-center">
+            // Am Handy ist jede Zeile ein Kasten mit Feldern untereinander; erst
+            // ab Tablet-Breite passen Datum, Art, Betrag und Löschen in eine Reihe.
+            <div
+              key={line.key}
+              className="flex flex-col gap-2 p-3 border border-gray-100 rounded-2xl sm:grid sm:grid-cols-[1fr_1fr_6rem_auto] sm:items-center sm:p-0 sm:border-0 sm:rounded-none"
+            >
               <input
                 type="date"
                 value={line.date}
                 onChange={(e) => update(line.key, { date: e.target.value })}
-                className={inputClass}
+                className={`${inputClass} ${dateInputClass}`}
                 aria-label="Datum der Auszahlung"
               />
               <select
@@ -171,6 +188,9 @@ function SettlementDialog({
                   <option key={kind} value={kind}>{label}</option>
                 ))}
               </select>
+              {/* Betrag und Löschen bleiben am Handy nebeneinander; ab Tablet-
+                  Breite löst sich die Hülle auf und beide werden Rasterspalten. */}
+              <div className="flex gap-2 sm:contents">
               <input
                 type="text"
                 inputMode="decimal"
@@ -189,6 +209,7 @@ function SettlementDialog({
               >
                 <Trash2 size={16} />
               </button>
+              </div>
             </div>
           ))}
           <button

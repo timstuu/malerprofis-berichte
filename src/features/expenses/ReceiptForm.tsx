@@ -55,6 +55,11 @@ function readAsDataUrl(file: File): Promise<string> {
 
 const inputClass = 'w-full p-3 bg-gray-100 rounded-xl border-none text-sm focus:outline-none focus:ring-2 focus:ring-brand-accent1/20';
 const labelClass = 'text-[11px] font-semibold text-[#141414]/40 uppercase tracking-wider block mb-1';
+/**
+ * Safari am iPhone gibt Datumsfeldern eine eigene Mindestbreite und ignoriert
+ * `w-full` — ohne Eigen-Darstellung passt sich das Feld den anderen an.
+ */
+export const dateInputClass = 'appearance-none min-w-0 [&::-webkit-date-and-time-value]:text-left';
 
 /**
  * Anlegen und Bearbeiten eines Belegs — für den Maler wie fürs Büro.
@@ -207,7 +212,7 @@ export default function ReceiptForm({
             value={receiptDate}
             max={today}
             onChange={(e) => setReceiptDate(e.target.value)}
-            className={inputClass}
+            className={`${inputClass} ${dateInputClass}`}
           />
         </div>
         <div>
