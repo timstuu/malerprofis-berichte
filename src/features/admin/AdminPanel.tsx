@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase.ts';
 import UserManagement from './UserManagement.tsx';
 import WeeklyReportsAdmin from './WeeklyReportsAdmin.tsx';
 import AbnahmeProtocolsAdmin from './AbnahmeProtocolsAdmin.tsx';
+import ExpensesAdmin from './ExpensesAdmin.tsx';
 import LeaveAdmin from '../leave/LeaveAdmin.tsx';
 import type { Employee, Holiday, LeaveRequest, Site } from '../../lib/database.types.ts';
 
@@ -109,6 +110,9 @@ export default function AdminPanel({
 
       {/* --------------------------------------------------------------- */}
       <AbnahmeProtocolsAdmin />
+
+      {/* --------------------------------------------------------------- */}
+      <ExpensesAdmin currentUserId={currentUserId} />
 
       {/* --------------------------------------------------------------- */}
       <LeaveAdmin

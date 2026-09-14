@@ -5,12 +5,15 @@ import type {
   Assignment,
   DefaultHours,
   Employee,
+  ExpenseReceipt,
+  ExpenseSettlement,
   Holiday,
   LeaveRequest,
   LeaveStatus,
   Site,
   TradeEntryRow,
   TradeRow,
+  VatMode,
   WeekNote,
 } from './database.types.ts';
 
@@ -786,4 +789,205 @@ export async function abnahmePdfUrl(path: string): Promise<string> {
     throw new Error(`PDF konnte nicht geöffnet werden: ${error?.message ?? 'unbekannter Fehler'}`);
   }
   return data.signedUrl;
+}
+
+// ---------------------------------------------------------------------------
+// Auslagen
+// ---------------------------------------------------------------------------
+
+const RECEIPT_BUCKET = 'auslagen';
+
+/** Die Felder eines Belegs, wie Formular und Puffer sie weitergeben. */
+export interface ExpenseReceiptInput {
+  /** Vom Gerät vergeben, damit das Nachreichen keine Dubletten erzeugt. */
+  id: string;
+  employeeId: string;
+  receiptDate: string;
+  vendor: string;
+  category: string;
+  vatMode: VatMode;
+  grossCents: number;
+  vat7Cents: number;
+  vat19Cents: number;
+}
+
+/** Ein Foto mit dem Pfad, unter dem es im Bucket landen soll. */
+export interface ReceiptPhotoUpload {
+  path: string;
+  blob: Blob;
+}
+
+/** Beleg mit dem Namen seines Mitarbeiters. */
+export interface ExpenseReceiptRow extends ExpenseReceipt {
+  employees: { first_name: string; last_name: string } | null;
+}
+
+/**
+ * Pfad eines neuen Belegfotos. Erstes Segment ist der Mitarbeiter (danach
+ * richten sich die Zugriffsregeln), zweites der Beleg (danach richtet sich,
+ * ob ein Foto noch gelöscht werden darf).
+ */
+export function receiptPhotoPath(employeeId: string, receiptId: string): string {
+  return `${employeeId}/${receiptId}/${crypto.randomUUID()}.jpg`;
+}
+
+async function uploadReceiptPhotos(photos: ReceiptPhotoUpload[]): Promise<void> {
+  for (const photo of photos) {
+    const { error } = await supabase.storage
+      .from(RECEIPT_BUCKET)
+      .upload(photo.path, photo.blob, { contentType: 'image/jpeg' });
+    // Beim Nachreichen aus dem Puffer kann ein Foto schon oben liegen, weil
+    // ein früherer Versuch erst danach abbrach. Das ist kein Fehler.
+    if (error && !/exist|duplicate/i.test(error.message)) {
+      throw new Error(`Belegfoto konnte nicht übertragen werden: ${error.message}`);
+    }
+  }
+}
+
+/** Fotos wegräumen. Scheitert das, bleibt nur eine verwaiste Datei zurück. */
+async function removeReceiptPhotos(paths: string[]): Promise<void> {
+  if (paths.length === 0) return;
+  const { error } = await supabase.storage.from(RECEIPT_BUCKET).remove(paths);
+  if (error) console.error('Belegfotos konnten nicht entfernt werden:', error.message);
+}
+
+function receiptColumns(input: ExpenseReceiptInput) {
+  return {
+    receipt_date: input.receiptDate,
+    vendor: input.vendor,
+    category: input.category,
+    vat_mode: input.vatMode,
+    gross: input.grossCents / 100,
+    vat7: input.vat7Cents / 100,
+    vat19: input.vat19Cents / 100,
+  };
+}
+
+/**
+ * Legt einen Beleg an: erst die Fotos, dann die Zeile — dieselbe Reihenfolge
+ * wie bei der Abnahme, damit kein Beleg auf fehlende Fotos zeigt.
+ *
+ * Gibt es die Zeile schon (ein früherer Versuch kam durch, nur die Antwort
+ * nicht), passiert nichts. Deshalb darf der Puffer denselben Beleg gefahrlos
+ * noch einmal schicken.
+ */
+export async function createExpenseReceipt(
+  input: ExpenseReceiptInput,
+  photos: ReceiptPhotoUpload[],
+): Promise<void> {
+  await uploadReceiptPhotos(photos);
+  const { error } = await supabase.from('expense_receipts').upsert(
+    {
+      id: input.id,
+      employee_id: input.employeeId,
+      ...receiptColumns(input),
+      photo_paths: photos.map((p) => p.path),
+    },
+    { onConflict: 'id', ignoreDuplicates: true },
+  );
+  if (error) {
+    throw new Error(`Beleg konnte nicht gespeichert werden: ${error.message}`);
+  }
+}
+
+/**
+ * Ändert einen offenen Beleg. Neue Fotos gehen zuerst hoch, entfernte werden
+ * erst gelöscht, wenn die Zeile ohne sie gespeichert ist.
+ */
+export async function updateExpenseReceipt(
+  input: ExpenseReceiptInput,
+  keptPaths: string[],
+  newPhotos: ReceiptPhotoUpload[],
+  removedPaths: string[],
+  updatedBy: string,
+): Promise<void> {
+  await uploadReceiptPhotos(newPhotos);
+  const { data, error } = await supabase
+    .from('expense_receipts')
+    .update({
+      ...receiptColumns(input),
+      photo_paths: [...keptPaths, ...newPhotos.map((p) => p.path)],
+      updated_at: new Date().toISOString(),
+      updated_by: updatedBy,
+    })
+    .eq('id', input.id)
+    .select('id');
+  if (error) {
+    throw new Error(`Beleg konnte nicht geändert werden: ${error.message}`);
+  }
+  // Ein abgerechneter Beleg wird von der Sicherheitsregel still übergangen.
+  if (!data || data.length === 0) {
+    throw new Error('Beleg konnte nicht geändert werden: Er ist bereits abgerechnet oder nicht mehr vorhanden.');
+  }
+  await removeReceiptPhotos(removedPaths);
+}
+
+/** Löscht einen offenen Beleg samt Fotos. */
+export async function deleteExpenseReceipt(receipt: ExpenseReceipt): Promise<void> {
+  const { data, error } = await supabase
+    .from('expense_receipts')
+    .delete()
+    .eq('id', receipt.id)
+    .select('id');
+  if (error) {
+    throw new Error(`Beleg konnte nicht gelöscht werden: ${error.message}`);
+  }
+  if (!data || data.length === 0) {
+    throw new Error('Beleg konnte nicht gelöscht werden: Er ist bereits abgerechnet oder nicht mehr vorhanden.');
+  }
+  await removeReceiptPhotos(receipt.photo_paths);
+}
+
+/**
+ * Belege, älteste zuerst. Ohne Mitarbeiter: alle, die der Angemeldete sehen
+ * darf — beim Büro also die ganze Mannschaft.
+ */
+export async function fetchExpenseReceipts(
+  options: { employeeId?: string; openOnly?: boolean } = {},
+): Promise<ExpenseReceiptRow[]> {
+  let query = supabase
+    .from('expense_receipts')
+    .select('*, employees(first_name, last_name)')
+    .order('receipt_date', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (options.employeeId) query = query.eq('employee_id', options.employeeId);
+  if (options.openOnly) query = query.is('settlement_id', null);
+
+  const result = await query;
+  return unwrap<ExpenseReceiptRow[]>(
+    result as unknown as { data: ExpenseReceiptRow[] | null; error: { message: string } | null },
+    'Belege',
+  );
+}
+
+/** Monatsabschlüsse, neueste zuerst. */
+export async function fetchExpenseSettlements(employeeId?: string): Promise<ExpenseSettlement[]> {
+  let query = supabase
+    .from('expense_settlements')
+    .select('*')
+    .order('month', { ascending: false });
+  if (employeeId) query = query.eq('employee_id', employeeId);
+
+  const result = await query;
+  return unwrap<ExpenseSettlement[]>(
+    result as unknown as { data: ExpenseSettlement[] | null; error: { message: string } | null },
+    'Abrechnungen',
+  );
+}
+
+/**
+ * Signierte Adressen für Belegfotos, Pfad → URL. Der Bucket ist privat; eine
+ * Stunde reicht, um eine Liste anzusehen.
+ */
+export async function receiptPhotoUrls(paths: string[]): Promise<Record<string, string>> {
+  if (paths.length === 0) return {};
+  const { data, error } = await supabase.storage.from(RECEIPT_BUCKET).createSignedUrls(paths, 3600);
+  if (error || !data) {
+    throw new Error(`Belegfotos konnten nicht geladen werden: ${error?.message ?? 'unbekannter Fehler'}`);
+  }
+  const urls: Record<string, string> = {};
+  for (const item of data) {
+    if (item.path && item.signedUrl) urls[item.path] = item.signedUrl;
+  }
+  return urls;
 }

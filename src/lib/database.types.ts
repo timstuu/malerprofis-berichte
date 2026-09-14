@@ -149,6 +149,55 @@ export interface Holiday {
   name: string;
 }
 
+/**
+ * Wie die Mehrwertsteuer eines Belegs erfasst ist. Bei einem einzelnen Satz
+ * rechnet die App die Steuer aus dem Brutto, bei 'mixed' stehen beide Beträge
+ * so da, wie der Maler sie vom Beleg abgelesen hat.
+ */
+export type VatMode = 'none' | '7' | '19' | 'mixed';
+export type PayoutKind = 'ueberweisung' | 'bar' | 'vorschuss';
+
+/** Ein Kassenbeleg. Offen, solange `settlement_id` leer ist. */
+export interface ExpenseReceipt {
+  id: string;
+  employee_id: string;
+  receipt_date: string; // yyyy-MM-dd
+  /** „Name/Ort“ der Excel-Vorlage. */
+  vendor: string;
+  /** „Art“ der Excel-Vorlage. */
+  category: string;
+  vat_mode: VatMode;
+  /** Euro, wie numeric aus der Datenbank kommt. */
+  gross: number;
+  vat7: number;
+  vat19: number;
+  photo_paths: string[];
+  settlement_id: string | null;
+  created_at: string;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+/** Eine Auszahlungszeile unter der Summe eines Abschlusses. */
+export interface ExpensePayout {
+  date: string; // yyyy-MM-dd
+  kind: PayoutKind;
+  /** Euro. */
+  amount: number;
+}
+
+/** Monatsabschluss der Auslagen eines Mitarbeiters. */
+export interface ExpenseSettlement {
+  id: string;
+  employee_id: string;
+  month: string; // yyyy-MM-01
+  settled_on: string; // yyyy-MM-dd
+  total: number;
+  payouts: ExpensePayout[];
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface PushSubscriptionRow {
   id: string;
   employee_id: string;

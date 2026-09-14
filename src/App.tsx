@@ -27,7 +27,8 @@ import {
   Camera,
   Palmtree,
   Settings,
-  Lock
+  Lock,
+  Receipt
 } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 import { motion, AnimatePresence } from 'motion/react';
@@ -64,6 +65,8 @@ import {
 import { fetchHandledAssignmentIds, markAssignments } from './lib/planning.ts';
 import { flushAbnahmeQueue, pendingAbnahmeCount, queueAbnahme, shrinkPhoto } from './lib/abnahme.ts';
 import DefaultHours from './features/admin/DefaultHours.tsx';
+import ExpensesView from './features/expenses/ExpensesView.tsx';
+import { flushReceiptQueue, pendingReceiptCount } from './lib/expense-queue.ts';
 import { buildPrefill } from './lib/prefill.ts';
 import type { Employee, Holiday, LeaveRequest, Site } from './lib/database.types.ts';
 
@@ -220,7 +223,7 @@ function ReportEntryEditor({
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'wochenbericht' | 'planung' | 'abnahme' | 'leave' | 'admin' | 'settings'>('planung');
+  const [activeTab, setActiveTab] = useState<'wochenbericht' | 'planung' | 'abnahme' | 'leave' | 'auslagen' | 'admin' | 'settings'>('planung');
   const [selectedWeek, setSelectedWeek] = useState(startOfISOWeek(new Date()));
   const { employee: currentUser, signOut } = useAuth();
   const isAdmin = currentUser?.role === 'admin';
@@ -688,6 +691,29 @@ export default function App() {
     };
   }, [currentUser]);
 
+  /** Zählt hoch, wenn gepufferte Belege nachgereicht wurden — der Reiter lädt dann neu. */
+  const [expenseSyncTick, setExpenseSyncTick] = useState(0);
+
+  // Gepufferte Belege nachreichen, genau wie die Abnahmen: beim Start und bei
+  // jedem Netzwechsel. Hier und nicht im Reiter, damit ein Beleg auch dann
+  // ankommt, wenn der Maler den Reiter nicht wieder öffnet.
+  useEffect(() => {
+    if (!currentUser) return;
+    let aborted = false;
+    const flush = async () => {
+      const waiting = await pendingReceiptCount();
+      if (waiting === 0) return;
+      const remaining = await flushReceiptQueue();
+      if (!aborted && remaining < waiting) setExpenseSyncTick((tick) => tick + 1);
+    };
+    flush();
+    window.addEventListener('online', flush);
+    return () => {
+      aborted = true;
+      window.removeEventListener('online', flush);
+    };
+  }, [currentUser]);
+
   // Nur noch das Abnahmeprotokoll wird auf dem Gerät zum PDF. Der
   // Wochenbericht geht als Daten ans Büro und wird dort gedruckt.
   const generatePDFBlob = async (signatures: { employee?: string, customer?: string }) => {
@@ -948,6 +974,7 @@ export default function App() {
     { id: 'wochenbericht', label: 'Wochenberichte', icon: Clock },
     { id: 'abnahme', label: 'Abnahme', icon: CheckSquare },
     { id: 'leave', label: 'Urlaub', icon: Palmtree },
+    { id: 'auslagen', label: 'Auslagen', icon: Receipt },
     ...(isAdmin ? [{ id: 'admin', label: 'Verwaltung', icon: Users }] : []),
     { id: 'settings', label: 'Einstellungen', icon: Settings },
   ];
@@ -1786,6 +1813,17 @@ export default function App() {
                   onSubmit={handleAddLeaveRequest}
                   onWithdraw={handleWithdrawLeaveRequest}
                 />
+              </motion.div>
+            )}
+
+            {activeTab === 'auslagen' && currentUser && (
+              <motion.div
+                key="auslagen"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+              >
+                <ExpensesView currentUser={currentUser} syncTick={expenseSyncTick} />
               </motion.div>
             )}
 

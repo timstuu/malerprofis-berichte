@@ -33,6 +33,9 @@ Daten liegt vollständig in den Row-Level-Security-Regeln der Datenbank.
      die ab dieser Woche auf Büro-Konten gebuchten Einsätze und meldet vorher
      unter „Messages", wie viele es sind. Fehlt sie, gibt es eben keine
      Standardzeiten; die App geht davon nicht kaputt
+   - `0014_expenses.sql` — Auslagen: Belege mit Fotos, Monatsabschlüsse und
+     der private Bucket `auslagen`. Fehlt sie, zeigt der Reiter „Auslagen“
+     eine Fehlermeldung; der Rest der App läuft weiter
 3. Unter **Project Settings → API** die Projekt-URL und den `anon`-Key notieren.
 
 ### 2. Zugangsdaten hinterlegen
