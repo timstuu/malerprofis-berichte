@@ -48,7 +48,7 @@
     "footText": "#ffffff",
     "zebra": true,
     "zebraFill": "#f5f5f5",
-    "lines": "none",
+    "lines": "horizontal",
     "lineColor": "#c8c8c8",
     "lineWidth": 0.1
   },
@@ -66,7 +66,7 @@
     "photoWidth": 50
   },
   "footer": {
-    "pageNumbers": false,
+    "pageNumbers": true,
     "text": "",
     "fontSize": 8,
     "color": "#808080"
