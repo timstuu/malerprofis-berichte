@@ -4,8 +4,23 @@
     {
       "name": "malerprofis-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "pdf-designer",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5190",
+        "-d",
+        "pdf-designer/dist"
+      ],
+      "port": 5190
     }
   ]
 }

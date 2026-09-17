@@ -35,7 +35,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { de } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { jsPDF } from 'jspdf';
+import { renderAbnahmePdf } from './lib/abnahme-pdf.ts';
+import { loadPdfLogo } from './lib/pdf/logo.ts';
 import Logo from './components/Logo.tsx';
 import AdminPanel from './features/admin/AdminPanel.tsx';
 import WeekGrid from './features/planning/WeekGrid.tsx';
@@ -717,123 +718,17 @@ export default function App() {
   // Nur noch das Abnahmeprotokoll wird auf dem Gerät zum PDF. Der
   // Wochenbericht geht als Daten ans Büro und wird dort gedruckt.
   const generatePDFBlob = async (signatures: { employee?: string, customer?: string }) => {
-    const doc = new jsPDF();
-    
-    // Header
-    doc.setFontSize(10);
-    doc.text("Malermeister Uderstadt GmbH", 20, 15);
-    doc.text("Luisenweg 7, 20537 Hamburg", 20, 20);
-    
-    try {
-      const img = new Image();
-      const baseUrl = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-      img.src = `${window.location.origin}${baseUrl}icons/logo.png?v=${__APP_VERSION__}`;
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-      });
-      
-      const maxWidth = 40;
-      const maxHeight = 20;
-      let logoWidth = maxWidth;
-      let logoHeight = maxHeight;
-      if (img.width && img.height) {
-        const ratio = img.width / img.height;
-        if (ratio > maxWidth / maxHeight) {
-          logoWidth = maxWidth;
-          logoHeight = maxWidth / ratio;
-        } else {
-          logoHeight = maxHeight;
-          logoWidth = maxHeight * ratio;
-        }
-      }
-      const logoX = 190 - logoWidth; // Aligns the right edge to x=190
-      doc.addImage(img, 'PNG', logoX, 10, logoWidth, logoHeight); 
-    } catch (e) {
-      console.error("Failed to load logo.png for PDF generation, using fallback", e);
-      doc.setFontSize(14);
-      doc.text("Malerprofis", 150, 20);
-      doc.setFontSize(10);
-    }
-    
-    doc.setFontSize(16);
-    doc.text('Abnahmeprotokoll', 20, 40);
-    doc.setFontSize(12);
-    doc.text(`Mitarbeiter: ${userName.firstName} ${userName.lastName}`, 20, 50);
-    
-    let currentY = 60;
-    
-    doc.text(`Baustelle / Adresse: ${abnahme.address}`, 20, currentY);
-    doc.text(`Baustellennummer: ${abnahme.number}`, 20, currentY + 10);
-    doc.text(`Teilnehmer: ${abnahme.participants.join(', ')}`, 20, currentY + 20);
-    doc.text(`Art der Abnahme: ${abnahme.type === 'teil' ? 'Teilabnahme' : 'Gesamtabnahme'}`, 20, currentY + 30);
-    doc.text(`Status: ${abnahme.status === 'ohne' ? 'Ohne sichtbare Mängel' : 'Mit Mängeln/Restarbeiten'}`, 20, currentY + 40);
-
-    currentY += 50;
-    // Die Frist gehört zum Mängelfall und steht deshalb auch dann im Bericht,
-    // wenn (noch) kein einzelner Mangel aufgeführt ist. Ohne Datum wird der
-    // offene Termin ausdrücklich benannt, statt ihn wegzulassen.
-    if (abnahme.status === 'mit') {
-      const terminText = abnahme.reworkDue
-        ? `Nacharbeiten bis: ${format(new Date(`${abnahme.reworkDue}T00:00:00`), 'dd.MM.yyyy')}`
-        : 'Termin für die Nacharbeiten wird noch festgelegt.';
-      doc.text(terminText, 20, currentY);
-      currentY += 10;
-    }
-    if (abnahme.status === 'mit' && abnahme.tasks && abnahme.tasks.length > 0) {
-      doc.text(`Mängel/Kommentar:`, 20, currentY);
-      currentY += 10;
-
-      abnahme.tasks.forEach((task) => {
-        // Check if text would overflow
-        if (currentY > 275) {
-          doc.addPage();
-          currentY = 20;
-        }
-        doc.text(`- ${task.text}`, 25, currentY);
-        currentY += 7;
-
-        if (task.photo) {
-          // Check if image would overflow (needs 37.5mm + margin)
-          if (currentY > 230) {
-            doc.addPage();
-            currentY = 20;
-          }
-          try {
-            let formatType = 'JPEG';
-            if (task.photo.includes('image/png')) {
-              formatType = 'PNG';
-            }
-            doc.addImage(task.photo, formatType, 25, currentY, 50, 37.5);
-            currentY += 42;
-          } catch (e) {
-            console.error("Error drawing photo in PDF:", e);
-            doc.text("[Fehler beim Laden des Fotos]", 25, currentY);
-            currentY += 7;
-          }
-        }
-      });
-      currentY += 5;
-    }
-
-    // Signature area
-    if (currentY > 240) {
-      doc.addPage();
-      currentY = 20;
-    }
-
-    doc.text(`Datum: ${format(new Date(), 'dd.MM.yyyy')}`, 20, currentY);
-    doc.text("Unterschrift Mitarbeiter:", 20, currentY + 10);
-    if (signatures.employee) {
-        doc.addImage(signatures.employee, 'PNG', 20, currentY + 15, 50, 20);
-    }
-
-    doc.text(`Datum: ${format(new Date(), 'dd.MM.yyyy')}`, 120, currentY);
-    doc.text("Unterschrift Kunde:", 120, currentY + 10);
-    if (signatures.customer) {
-        doc.addImage(signatures.customer, 'PNG', 120, currentY + 15, 50, 20);
-    }
-
+    const doc = renderAbnahmePdf(
+      {
+        ...abnahme,
+        firstName: userName.firstName,
+        lastName: userName.lastName,
+        date: new Date(),
+        employeeSignature: signatures.employee,
+        customerSignature: signatures.customer,
+      },
+      await loadPdfLogo(),
+    );
     return doc.output('blob');
   };
 

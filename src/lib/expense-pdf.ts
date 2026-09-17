@@ -1,7 +1,24 @@
 import { format, parseISO } from 'date-fns';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { drawLetterhead } from './report-pdf.ts';
+import {
+  PAGE_HEIGHT,
+  contentLeft,
+  contentWidth,
+  drawLetterhead,
+  drawMeta,
+  drawSignature,
+  drawTitle,
+  finishPages,
+  lastTableEnd,
+  pdfDesign,
+  tableOptions,
+  tableTop,
+  useText,
+  type PdfDesign,
+  type PdfLogo,
+} from './pdf/design.ts';
+import { loadPdfLogo } from './pdf/logo.ts';
 import {
   expenseFileName,
   formatAmount,
@@ -20,7 +37,8 @@ import type { ExpenseReceipt, ExpenseSettlement } from './database.types.ts';
  * Excel-Vorlage, dahinter je Beleg eine Seite mit seinen Fotos.
  *
  * Wie beim Wochenbericht ohne Zugriff auf Datenbank oder Oberfläche — die
- * Fotos kommen schon geladen herein.
+ * Fotos kommen schon geladen herein. Die Gestaltung kommt aus
+ * `pdf/design.json`.
  */
 
 export interface ExpensePdfData {
@@ -32,14 +50,9 @@ export interface ExpensePdfData {
   photos: Record<string, string>;
 }
 
-const PAGE_WIDTH = 210;
-const MARGIN = 15;
 /** Oberkante des Fotobereichs auf einer Belegseite, unter der Überschrift. */
 const PHOTO_TOP = 34;
-const PHOTO_BOTTOM = 285;
 const PHOTO_GAP = 6;
-/** Zwei Fotos teilen sich eine Seite; so bleibt ein Kassenzettel lesbar. */
-const PHOTOS_PER_PAGE = 2;
 
 export function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -73,54 +86,48 @@ function drawPhoto(doc: jsPDF, dataUrl: string, x: number, y: number, maxWidth: 
  * Unterschrift. Ort, Datum und Betrag stehen schon in der Kopfzeile der Seite.
  * Gibt zurück, wo darunter die Fotos anfangen dürfen.
  */
-function drawEntertainment(doc: jsPDF, receipt: ExpenseReceipt, top: number): number {
-  const width = PAGE_WIDTH - 2 * MARGIN;
+function drawEntertainment(doc: jsPDF, receipt: ExpenseReceipt, top: number, d: PdfDesign): number {
+  const width = contentWidth(d);
+  const size = d.receiptPage.infoSize;
   let y = top;
-  doc.setFontSize(11);
-  doc.text('Angaben zur Bewirtung', MARGIN, y);
+  useText(doc, d, { size: size + 1, bold: true });
+  doc.text('Angaben zur Bewirtung', contentLeft(d), y);
   y += 6;
-  doc.setFontSize(10);
   const fields: [string, string | null][] = [
     ['Bewirtete Personen', receipt.entertainment_guests],
     ['Anlass', receipt.entertainment_occasion],
   ];
   for (const [label, value] of fields) {
+    useText(doc, d, { size });
     const lines = doc.splitTextToSize(`${label}: ${value?.trim() || '-'}`, width) as string[];
-    doc.text(lines, MARGIN, y);
+    doc.text(lines, contentLeft(d), y);
     y += lines.length * 4.5 + 1.5;
   }
-  doc.text('Unterschrift Mitarbeiter:', MARGIN, y);
-  if (receipt.entertainment_signature) {
-    try {
-      doc.addImage(receipt.entertainment_signature, 'PNG', MARGIN, y + 2, 50, 20);
-    } catch (error) {
-      console.error('Unterschrift konnte nicht ins PDF:', error);
-    }
-  }
-  return y + 30;
+  drawSignature(doc, 'Unterschrift Mitarbeiter:', receipt.entertainment_signature, contentLeft(d), y + 3, d);
+  return y + d.signature.height + 18;
 }
 
-function finalY(doc: jsPDF): number {
-  return (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
-}
-
-/** Baut das PDF und gibt es als Blob zurück. */
-export async function buildExpensePdf(data: ExpensePdfData): Promise<Blob> {
+/** Zeichnet die Abrechnung. Ohne Laden, damit der Designer dasselbe zeigt. */
+export function renderExpensePdf(data: ExpensePdfData, logo: PdfLogo, d: PdfDesign = pdfDesign): jsPDF {
   const doc = new jsPDF();
   const { settlement } = data;
   const fullName = `${data.firstName} ${data.lastName}`.trim();
   const receipts = numberReceipts(data.receipts);
 
-  await drawLetterhead(doc);
-
-  doc.setFontSize(16);
-  doc.text('Abrechnung von Auslagen', 20, 40);
-  doc.setFontSize(11);
-  doc.text(`Monat: ${format(parseISO(settlement.month), 'MM/yyyy')}`, 20, 50);
-  doc.text(`Name: ${fullName} (${initials(data.firstName, data.lastName)})`, 20, 57);
-  doc.text(`Datum: ${dateText(settlement.settled_on)}`, 20, 64);
+  drawLetterhead(doc, logo, d);
+  const metaTop = drawTitle(doc, d.title.expenses, d);
   const kinds = [...new Set(settlement.payouts.map((p) => payoutLabel(p.kind)))];
-  doc.text(`Art der Auszahlung: ${kinds.join(', ')}`, 20, 71);
+  const metaEnd = drawMeta(
+    doc,
+    [
+      ['Monat', format(parseISO(settlement.month), 'MM/yyyy')],
+      ['Name', `${fullName} (${initials(data.firstName, data.lastName)})`],
+      ['Datum', dateText(settlement.settled_on)],
+      ['Art der Auszahlung', kinds.join(', ')],
+    ],
+    metaTop,
+    d,
+  );
 
   const vat7Total = receipts.reduce((sum, r) => sum + toCents(r.vat7), 0);
   const vat19Total = receipts.reduce((sum, r) => sum + toCents(r.vat19), 0);
@@ -132,7 +139,8 @@ export async function buildExpensePdf(data: ExpensePdfData): Promise<Blob> {
   };
 
   autoTable(doc, {
-    startY: 80,
+    ...tableOptions(d),
+    startY: tableTop(metaEnd, d),
     head: [['Beleg-Nr.', 'Datum', 'Name/Ort', 'Art', 'MwSt 7 %', 'MwSt 19 %', 'Brutto gesamt']],
     body: receipts.map((r) => [
       String(r.number),
@@ -156,7 +164,8 @@ export async function buildExpensePdf(data: ExpensePdfData): Promise<Blob> {
   });
 
   autoTable(doc, {
-    startY: finalY(doc) + 10,
+    ...tableOptions(d),
+    startY: lastTableEnd(doc) + 10,
     head: [['Datum', 'Auszahlung', 'Name', 'Betrag (EUR)']],
     body: settlement.payouts.map((p) => [
       dateText(p.date),
@@ -179,41 +188,50 @@ export async function buildExpensePdf(data: ExpensePdfData): Promise<Blob> {
   // Je Beleg eine eigene Seite, damit das Büro jeden Zettel zuordnen kann.
   for (const receipt of receipts) {
     const paths = receipt.photo_paths;
-    const pages = Math.max(1, Math.ceil(paths.length / PHOTOS_PER_PAGE));
+    const perPage = Math.max(1, Math.round(d.receiptPage.photosPerPage));
+    const pages = Math.max(1, Math.ceil(paths.length / perPage));
     for (let page = 0; page < pages; page++) {
       doc.addPage();
-      doc.setFontSize(14);
-      doc.text(`Beleg Nr. ${receipt.number}${page > 0 ? ' (Fortsetzung)' : ''}`, MARGIN, 18);
-      doc.setFontSize(10);
+      useText(doc, d, { size: d.receiptPage.titleSize, bold: d.title.bold, color: d.title.color });
+      doc.text(`Beleg Nr. ${receipt.number}${page > 0 ? ' (Fortsetzung)' : ''}`, contentLeft(d), 18);
+      useText(doc, d, { size: d.receiptPage.infoSize });
       doc.text(
         `${dateText(receipt.receipt_date)} · ${receipt.vendor} · ${receipt.category} · ${formatAmount(toCents(receipt.gross))} EUR`,
-        MARGIN,
+        contentLeft(d),
         25,
-        { maxWidth: PAGE_WIDTH - 2 * MARGIN },
+        { maxWidth: contentWidth(d) },
       );
 
       // Die Bewirtungsangaben gehören auf die erste Seite des Belegs.
       const photoTop =
-        page === 0 && isEntertainment(receipt.category) ? drawEntertainment(doc, receipt, PHOTO_TOP) : PHOTO_TOP;
-      const onPage = paths.slice(page * PHOTOS_PER_PAGE, (page + 1) * PHOTOS_PER_PAGE);
+        page === 0 && isEntertainment(receipt.category) ? drawEntertainment(doc, receipt, PHOTO_TOP, d) : PHOTO_TOP;
+      const onPage = paths.slice(page * perPage, (page + 1) * perPage);
+      // Unten bleibt Platz für eine Fußzeile.
+      const photoBottom = PAGE_HEIGHT - 12;
       const slotHeight =
-        (PHOTO_BOTTOM - photoTop - PHOTO_GAP * Math.max(0, onPage.length - 1)) / Math.max(1, onPage.length);
+        (photoBottom - photoTop - PHOTO_GAP * Math.max(0, onPage.length - 1)) / Math.max(1, onPage.length);
       onPage.forEach((path, i) => {
         const y = photoTop + i * (slotHeight + PHOTO_GAP);
         const dataUrl = data.photos[path];
         try {
           if (!dataUrl) throw new Error(`Foto ${path} fehlt`);
-          drawPhoto(doc, dataUrl, MARGIN, y, PAGE_WIDTH - 2 * MARGIN, slotHeight);
+          drawPhoto(doc, dataUrl, contentLeft(d), y, contentWidth(d), slotHeight);
         } catch (error) {
           // Ein kaputtes Foto darf nicht die ganze Abrechnung verhindern.
           console.error('Belegfoto konnte nicht ins PDF:', error);
-          doc.text('[Foto konnte nicht geladen werden]', MARGIN, y + 10);
+          doc.text('[Foto konnte nicht geladen werden]', contentLeft(d), y + 10);
         }
       });
     }
   }
 
-  return doc.output('blob');
+  finishPages(doc, d);
+  return doc;
+}
+
+/** Baut das PDF und gibt es als Blob zurück. */
+export async function buildExpensePdf(data: ExpensePdfData): Promise<Blob> {
+  return renderExpensePdf(data, await loadPdfLogo()).output('blob');
 }
 
 /** Baut das PDF und stößt den Download an. */

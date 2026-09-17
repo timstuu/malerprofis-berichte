@@ -1,0 +1,74 @@
+{
+  "font": "helvetica",
+  "textColor": "#000000",
+  "page": {
+    "marginLeft": 20,
+    "marginRight": 20
+  },
+  "letterhead": {
+    "company": "Malermeister Uderstadt GmbH",
+    "address": "Luisenweg 7, 20537 Hamburg",
+    "fontSize": 10,
+    "bold": false,
+    "color": "#000000",
+    "top": 15,
+    "lineGap": 5,
+    "logoPosition": "right",
+    "logoWidth": 40,
+    "logoHeight": 20,
+    "logoTop": 10,
+    "rule": false,
+    "ruleColor": "#3981b7",
+    "ruleWidth": 0.5,
+    "ruleTop": 33
+  },
+  "title": {
+    "top": 40,
+    "fontSize": 16,
+    "bold": false,
+    "color": "#000000",
+    "weeklyReport": "Wochenbericht",
+    "expenses": "Abrechnung von Auslagen",
+    "abnahme": "Abnahmeprotokoll"
+  },
+  "meta": {
+    "gapAfterTitle": 10,
+    "fontSize": 12,
+    "lineHeight": 7,
+    "labelBold": false,
+    "gapBeforeTable": 8
+  },
+  "table": {
+    "fontSize": 10,
+    "cellPadding": 1.76,
+    "headFill": "#2980b9",
+    "headText": "#ffffff",
+    "headBold": true,
+    "footFill": "#2980b9",
+    "footText": "#ffffff",
+    "zebra": true,
+    "zebraFill": "#f5f5f5",
+    "lines": "none",
+    "lineColor": "#c8c8c8",
+    "lineWidth": 0.1
+  },
+  "signature": {
+    "gapAfterContent": 20,
+    "width": 50,
+    "height": 20
+  },
+  "receiptPage": {
+    "titleSize": 14,
+    "infoSize": 10,
+    "photosPerPage": 2
+  },
+  "abnahme": {
+    "photoWidth": 50
+  },
+  "footer": {
+    "pageNumbers": false,
+    "text": "",
+    "fontSize": 8,
+    "color": "#808080"
+  }
+}

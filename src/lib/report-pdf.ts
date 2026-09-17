@@ -1,6 +1,23 @@
 import { addDays, format, getISOWeek, getISOWeekYear, parseISO } from 'date-fns';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import {
+  PAGE_HEIGHT,
+  contentLeft,
+  drawLetterhead,
+  drawMeta,
+  drawSignature,
+  drawTitle,
+  finishPages,
+  lastTableEnd,
+  pdfDesign,
+  signatureHeight,
+  tableOptions,
+  tableTop,
+  type PdfDesign,
+  type PdfLogo,
+} from './pdf/design.ts';
+import { loadPdfLogo } from './pdf/logo.ts';
 
 /**
  * Das PDF eines Wochenberichts.
@@ -8,6 +25,7 @@ import autoTable from 'jspdf-autotable';
  * Bewusst ohne Zugriff auf Datenbank oder Oberfläche: Der Bericht wird aus
  * übergebenen Daten gebaut. Erzeugt wird er inzwischen im Büro, aus dem, was
  * der Maler abgegeben hat — nicht mehr auf dem Handy aus einem Entwurf.
+ * Die Gestaltung kommt aus `pdf/design.json`.
  */
 
 /** Eine Zeile des Berichts, so wie sie im PDF steht. */
@@ -48,77 +66,28 @@ export function weeklyReportFileName(lastName: string, weekStart: Date): string 
   return `KW ${week}_${name}_Wochenbericht_${year}.pdf`;
 }
 
-/** Lädt das Firmenlogo. Fehlt es, kommt der Bericht ohne aus. */
-async function loadLogo(): Promise<HTMLImageElement | null> {
-  try {
-    const img = new Image();
-    const base = import.meta.env.BASE_URL.endsWith('/')
-      ? import.meta.env.BASE_URL
-      : `${import.meta.env.BASE_URL}/`;
-    img.src = `${window.location.origin}${base}icons/logo.png?v=${__APP_VERSION__}`;
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = reject;
-    });
-    return img;
-  } catch (e) {
-    console.error('Logo konnte für das PDF nicht geladen werden:', e);
-    return null;
-  }
-}
-
-/**
- * Firmenkopf oben auf der ersten Seite: Anschrift links, Logo rechts.
- * Gemeinsam für alle PDFs, die im Büro entstehen.
- */
-export async function drawLetterhead(doc: jsPDF): Promise<void> {
-  doc.setFontSize(10);
-  doc.text('Malermeister Uderstadt GmbH', 20, 15);
-  doc.text('Luisenweg 7, 20537 Hamburg', 20, 20);
-
-  const logo = await loadLogo();
-  if (logo) {
-    const maxWidth = 40;
-    const maxHeight = 20;
-    let width = maxWidth;
-    let height = maxHeight;
-    if (logo.width && logo.height) {
-      const ratio = logo.width / logo.height;
-      if (ratio > maxWidth / maxHeight) {
-        width = maxWidth;
-        height = maxWidth / ratio;
-      } else {
-        height = maxHeight;
-        width = maxHeight * ratio;
-      }
-    }
-    doc.addImage(logo, 'PNG', 190 - width, 10, width, height);
-  } else {
-    doc.setFontSize(14);
-    doc.text('Malerprofis', 150, 20);
-    doc.setFontSize(10);
-  }
-}
-
-/** Baut das PDF und gibt es als Blob zurück. */
-export async function buildWeeklyReportPdf(data: ReportPdfData): Promise<Blob> {
+/** Zeichnet den Bericht. Ohne Laden, damit der Designer dasselbe zeigt. */
+export function renderWeeklyReportPdf(data: ReportPdfData, logo: PdfLogo, d: PdfDesign = pdfDesign): jsPDF {
   const doc = new jsPDF();
 
-  await drawLetterhead(doc);
-
-  doc.setFontSize(16);
-  doc.text('Wochenbericht', 20, 40);
-  doc.setFontSize(12);
-  doc.text(`Mitarbeiter: ${data.firstName} ${data.lastName}`, 20, 50);
+  drawLetterhead(doc, logo, d);
+  const metaTop = drawTitle(doc, d.title.weeklyReport, d);
 
   // Die Woche gehört ausdrücklich aufs Blatt. Im Büro liegen die Berichte
   // vieler Mitarbeiter nebeneinander; aus den Datumsspalten allein wäre die
   // Kalenderwoche jedes Mal nachzuzählen.
   const week = String(getISOWeek(data.weekStart)).padStart(2, '0');
-  doc.text(
-    `KW ${week} · ${format(data.weekStart, 'dd.MM.yyyy')} - ${format(addDays(data.weekStart, 6), 'dd.MM.yyyy')}`,
-    20,
-    57,
+  const metaEnd = drawMeta(
+    doc,
+    [
+      ['Mitarbeiter', `${data.firstName} ${data.lastName}`],
+      [
+        'Woche',
+        `KW ${week} · ${format(data.weekStart, 'dd.MM.yyyy')} - ${format(addDays(data.weekStart, 6), 'dd.MM.yyyy')}`,
+      ],
+    ],
+    metaTop,
+    d,
   );
 
   const sorted = [...data.entries].sort((a, b) =>
@@ -126,7 +95,8 @@ export async function buildWeeklyReportPdf(data: ReportPdfData): Promise<Blob> {
   );
 
   autoTable(doc, {
-    startY: 65,
+    ...tableOptions(d),
+    startY: tableTop(metaEnd, d),
     head: [['Datum', 'Nr.', 'Baustelle', 'Beschreibung', 'Startzeit', 'Endzeit', 'Pause', 'Std.']],
     body: sorted.map((e) => [
       format(parseISO(e.date), 'dd.MM.yyyy'),
@@ -146,20 +116,23 @@ export async function buildWeeklyReportPdf(data: ReportPdfData): Promise<Blob> {
     ],
   });
 
-  let y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 20;
+  let y = lastTableEnd(doc) + d.signature.gapAfterContent;
 
   // Die Unterschrift darf nicht am Seitenrand abgeschnitten werden.
-  if (y > 240) {
+  if (y + signatureHeight(d) > PAGE_HEIGHT - 20) {
     doc.addPage();
     y = 20;
   }
 
-  doc.text('Unterschrift Mitarbeiter:', 20, y);
-  if (data.signature) {
-    doc.addImage(data.signature, 'PNG', 20, y + 5, 50, 20);
-  }
+  drawSignature(doc, 'Unterschrift Mitarbeiter:', data.signature, contentLeft(d), y, d);
 
-  return doc.output('blob');
+  finishPages(doc, d);
+  return doc;
+}
+
+/** Baut das PDF und gibt es als Blob zurück. */
+export async function buildWeeklyReportPdf(data: ReportPdfData): Promise<Blob> {
+  return renderWeeklyReportPdf(data, await loadPdfLogo()).output('blob');
 }
 
 function round2(value: number): number {
