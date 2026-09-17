@@ -1,7 +1,9 @@
 import { format } from 'date-fns';
-import { jsPDF } from 'jspdf';
+import type { jsPDF } from 'jspdf';
 import {
   PAGE_HEIGHT,
+  createPdf,
+  loadPdfFonts,
   contentLeft,
   contentWidth,
   drawLetterhead,
@@ -15,6 +17,7 @@ import {
   type PdfDesign,
   type PdfLogo,
 } from './pdf/design.ts';
+import { loadPdfLogo } from './pdf/logo.ts';
 
 /**
  * Das PDF eines Abnahmeprotokolls. Es entsteht als einziges PDF noch auf dem
@@ -45,7 +48,7 @@ export interface AbnahmePdfData {
 const BOTTOM = PAGE_HEIGHT - 20;
 
 export function renderAbnahmePdf(data: AbnahmePdfData, logo: PdfLogo, d: PdfDesign = pdfDesign): jsPDF {
-  const doc = new jsPDF();
+  const doc = createPdf(d);
   const left = contentLeft(d);
   const lineHeight = d.meta.lineHeight;
 
@@ -125,4 +128,10 @@ export function renderAbnahmePdf(data: AbnahmePdfData, logo: PdfLogo, d: PdfDesi
 
   finishPages(doc, d);
   return doc;
+}
+
+/** Lädt Logo und Schrift und baut das PDF als Blob. */
+export async function buildAbnahmePdf(data: AbnahmePdfData): Promise<Blob> {
+  await loadPdfFonts(pdfDesign);
+  return renderAbnahmePdf(data, await loadPdfLogo()).output('blob');
 }

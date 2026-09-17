@@ -37,6 +37,14 @@ der Satz **„PDF-Design übernehmen“**.
 6. `designer/request` auf `status: "übernommen"`, `version`, `appliedAt`
    setzen und im Kommentar-Thread kurz antworten.
 
+## Schriften
+
+Helvetica, Times und Courier bringt jsPDF mit. „Arial“ ist **Arimo**
+(`src/lib/pdf/fonts/`, SIL Open Font License): gleich breit wie Arial, die
+echte Arial darf die App nicht ausliefern. Die App lädt Arimo erst, wenn das
+Design sie verlangt (`loadPdfFonts`); eine weitere Schrift braucht normal und
+fett als TTF, einen Eintrag in `loadPdfFonts` und in `PdfFont`.
+
 ## Wenn sich der PDF-Code ändert
 
 Neue Gestaltungswerte gehören in `design.json`, in `PdfDesign`

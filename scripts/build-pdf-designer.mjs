@@ -31,6 +31,22 @@ const bundle = await build({
   // Optionale Helfer von jsPDF für HTML-Export — die PDFs brauchen sie nicht.
   external: ['html2canvas', 'dompurify', 'canvg', 'core-js'],
   logLevel: 'warning',
+  // Wie Vite: `datei.ttf?inline` wird zur DataURL.
+  plugins: [
+    {
+      name: 'inline-suffix',
+      setup(b) {
+        b.onResolve({ filter: /\?inline$/ }, (args) => ({
+          path: path.join(args.resolveDir, args.path.replace(/\?inline$/, '')),
+          namespace: 'inline',
+        }));
+        b.onLoad({ filter: /.*/, namespace: 'inline' }, (args) => ({
+          contents: fs.readFileSync(args.path),
+          loader: 'dataurl',
+        }));
+      },
+    },
+  ],
 });
 
 const script = bundle.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');

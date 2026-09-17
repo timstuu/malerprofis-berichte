@@ -2,7 +2,11 @@ import { renderAbnahmePdf } from '../abnahme-pdf.ts';
 import { renderExpensePdf } from '../expense-pdf.ts';
 import { renderWeeklyReportPdf } from '../report-pdf.ts';
 import type { ExpenseReceipt } from '../database.types.ts';
-import { pdfDesign, type PdfDesign, type PdfLogo } from './design.ts';
+import { pdfDesign, registerPdfFont, type PdfDesign, type PdfLogo } from './design.ts';
+import { arimo } from './fonts/arimo.ts';
+
+// Im Designer liegen alle Schriften von Anfang an bereit.
+registerPdfFont('arimo', arimo);
 
 /**
  * Einstieg für den PDF-Designer (`npm run pdf-designer`). Wird mit esbuild zu

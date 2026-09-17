@@ -1,8 +1,10 @@
 import { addDays, format, getISOWeek, getISOWeekYear, parseISO } from 'date-fns';
-import { jsPDF } from 'jspdf';
+import type { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
   PAGE_HEIGHT,
+  createPdf,
+  loadPdfFonts,
   contentLeft,
   drawLetterhead,
   drawMeta,
@@ -68,7 +70,7 @@ export function weeklyReportFileName(lastName: string, weekStart: Date): string 
 
 /** Zeichnet den Bericht. Ohne Laden, damit der Designer dasselbe zeigt. */
 export function renderWeeklyReportPdf(data: ReportPdfData, logo: PdfLogo, d: PdfDesign = pdfDesign): jsPDF {
-  const doc = new jsPDF();
+  const doc = createPdf(d);
 
   drawLetterhead(doc, logo, d);
   const metaTop = drawTitle(doc, d.title.weeklyReport, d);
@@ -132,6 +134,7 @@ export function renderWeeklyReportPdf(data: ReportPdfData, logo: PdfLogo, d: Pdf
 
 /** Baut das PDF und gibt es als Blob zurück. */
 export async function buildWeeklyReportPdf(data: ReportPdfData): Promise<Blob> {
+  await loadPdfFonts(pdfDesign);
   return renderWeeklyReportPdf(data, await loadPdfLogo()).output('blob');
 }
 

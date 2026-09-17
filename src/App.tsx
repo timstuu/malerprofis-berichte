@@ -35,8 +35,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { de } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { renderAbnahmePdf } from './lib/abnahme-pdf.ts';
-import { loadPdfLogo } from './lib/pdf/logo.ts';
+import { buildAbnahmePdf } from './lib/abnahme-pdf.ts';
 import Logo from './components/Logo.tsx';
 import AdminPanel from './features/admin/AdminPanel.tsx';
 import WeekGrid from './features/planning/WeekGrid.tsx';
@@ -718,18 +717,14 @@ export default function App() {
   // Nur noch das Abnahmeprotokoll wird auf dem Gerät zum PDF. Der
   // Wochenbericht geht als Daten ans Büro und wird dort gedruckt.
   const generatePDFBlob = async (signatures: { employee?: string, customer?: string }) => {
-    const doc = renderAbnahmePdf(
-      {
-        ...abnahme,
-        firstName: userName.firstName,
-        lastName: userName.lastName,
-        date: new Date(),
-        employeeSignature: signatures.employee,
-        customerSignature: signatures.customer,
-      },
-      await loadPdfLogo(),
-    );
-    return doc.output('blob');
+    return buildAbnahmePdf({
+      ...abnahme,
+      firstName: userName.firstName,
+      lastName: userName.lastName,
+      date: new Date(),
+      employeeSignature: signatures.employee,
+      customerSignature: signatures.customer,
+    });
   };
 
   /**

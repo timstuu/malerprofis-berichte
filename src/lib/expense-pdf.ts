@@ -1,8 +1,10 @@
 import { format, parseISO } from 'date-fns';
-import { jsPDF } from 'jspdf';
+import type { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
   PAGE_HEIGHT,
+  createPdf,
+  loadPdfFonts,
   contentLeft,
   contentWidth,
   drawLetterhead,
@@ -109,7 +111,7 @@ function drawEntertainment(doc: jsPDF, receipt: ExpenseReceipt, top: number, d: 
 
 /** Zeichnet die Abrechnung. Ohne Laden, damit der Designer dasselbe zeigt. */
 export function renderExpensePdf(data: ExpensePdfData, logo: PdfLogo, d: PdfDesign = pdfDesign): jsPDF {
-  const doc = new jsPDF();
+  const doc = createPdf(d);
   const { settlement } = data;
   const fullName = `${data.firstName} ${data.lastName}`.trim();
   const receipts = numberReceipts(data.receipts);
@@ -231,6 +233,7 @@ export function renderExpensePdf(data: ExpensePdfData, logo: PdfLogo, d: PdfDesi
 
 /** Baut das PDF und gibt es als Blob zurück. */
 export async function buildExpensePdf(data: ExpensePdfData): Promise<Blob> {
+  await loadPdfFonts(pdfDesign);
   return renderExpensePdf(data, await loadPdfLogo()).output('blob');
 }
 

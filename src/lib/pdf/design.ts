@@ -1,4 +1,4 @@
-import type { jsPDF } from 'jspdf';
+import { jsPDF } from 'jspdf';
 import type { UserOptions } from 'jspdf-autotable';
 import designJson from './design.json';
 
@@ -13,7 +13,8 @@ import designJson from './design.json';
  * zeichnet auch die Vorschau im Designer.
  */
 
-export type PdfFont = 'helvetica' | 'times' | 'courier';
+/** Die ersten drei bringt jsPDF mit, `arimo` wird eingebettet (Arial-Ersatz). */
+export type PdfFont = 'helvetica' | 'times' | 'courier' | 'arimo';
 
 export interface PdfDesign {
   font: PdfFont;
@@ -78,6 +79,41 @@ export const pdfDesign = designJson as PdfDesign;
 /** Das Firmenlogo, schon geladen. `null`: Das PDF kommt ohne aus. */
 export type PdfLogo = HTMLImageElement | null;
 
+/** Eingebettete Schriften: Name → TrueType-Datei als base64 je Schnitt. */
+const embeddedFonts = new Map<string, { normal: string; bold: string }>();
+
+export function registerPdfFont(name: string, data: { normal: string; bold: string }): void {
+  embeddedFonts.set(name, data);
+}
+
+/** Lädt die Schrift nach, die das Design verlangt — vor dem Zeichnen aufrufen. */
+export async function loadPdfFonts(d: PdfDesign): Promise<void> {
+  if (d.font === 'arimo' && !embeddedFonts.has('arimo')) {
+    registerPdfFont('arimo', (await import('./fonts/arimo.ts')).arimo);
+  }
+}
+
+const BUILTIN_FONTS = ['helvetica', 'times', 'courier'];
+
+/** Die tatsächlich benutzte Schrift. Fehlt eine eingebettete, bleibt es Helvetica. */
+export function fontName(d: PdfDesign): string {
+  return BUILTIN_FONTS.includes(d.font) || embeddedFonts.has(d.font) ? d.font : 'helvetica';
+}
+
+/** Neues A4-Dokument, in dem die Schrift des Designs schon bereitliegt. */
+export function createPdf(d: PdfDesign): jsPDF {
+  const doc = new jsPDF();
+  const data = embeddedFonts.get(d.font);
+  if (data) {
+    for (const style of ['normal', 'bold'] as const) {
+      const file = `${d.font}-${style}.ttf`;
+      doc.addFileToVFS(file, data[style]);
+      doc.addFont(file, d.font, style);
+    }
+  }
+  return doc;
+}
+
 export const PAGE_WIDTH = 210;
 export const PAGE_HEIGHT = 297;
 
@@ -106,7 +142,7 @@ export function useText(
   d: PdfDesign,
   style: { size: number; bold?: boolean; color?: string },
 ): void {
-  doc.setFont(d.font, style.bold ? 'bold' : 'normal');
+  doc.setFont(fontName(d), style.bold ? 'bold' : 'normal');
   doc.setFontSize(style.size);
   doc.setTextColor(...rgb(style.color ?? d.textColor));
 }
@@ -195,7 +231,7 @@ export function tableOptions(d: PdfDesign): Partial<UserOptions> {
     theme: 'plain',
     margin: { left: d.page.marginLeft, right: d.page.marginRight },
     styles: {
-      font: d.font,
+      font: fontName(d),
       fontSize: t.fontSize,
       cellPadding: t.cellPadding,
       textColor: rgb(d.textColor),
