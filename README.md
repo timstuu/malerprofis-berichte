@@ -227,34 +227,52 @@ npm run dev
 | `npm run build` | Produktionsbuild nach `dist/` |
 | `npm run lint` | Typprüfung (`tsc --noEmit`) |
 | `npm run test` | Prüft die Übernahme der Planung und die Urlaubsberechnung |
-| `npm run anleitung` | Baut die Anleitung als PDF (siehe unten) |
+| `npm run anleitung` | Baut die Anleitungen als PDF (siehe unten) |
 | `npm run version:patch` | Version erhöhen — `:minor` und `:major` ebenso |
 
-### Anleitung
+### Anleitungen
 
-Die Anleitung für die Maler steht als Markdown in
-`docs/anleitung-maler.md` — **dort und nur dort** wird sie gepflegt. Das
-Format ist bewusst schlicht gehalten, damit eine KI sie ohne Umweg lesen kann:
-Frontmatter mit den Eckdaten, je Kapitel (`##`) ein Bereich der App, je
-Abschnitt (`###`) eine Aufgabe.
+Es gibt zwei, jede als Markdown gepflegt — **dort und nur dort**:
+
+| Quelle | Erzeugnis | Für wen |
+|---|---|---|
+| `docs/anleitung-maler.md` | `docs/Anleitung-Maler.pdf` | Rolle `worker` |
+| `docs/anleitung-buero.md` | `docs/Anleitung-Buero.pdf` | Rolle `admin` |
+
+Die Büro-Anleitung setzt die der Maler voraus und beschreibt nur, was für
+Büro-Konten hinzukommt oder anders gilt — Planung ändern, Berichte prüfen,
+Urlaub entscheiden, Auslagen abschließen, Stammdaten, Fernseher.
+
+Das Format ist bewusst schlicht gehalten, damit eine KI die Anleitungen ohne
+Umweg lesen kann: Frontmatter mit den Eckdaten, je Kapitel (`##`) ein Bereich
+der App, je Abschnitt (`###`) eine Aufgabe.
 
 ```bash
 npm run anleitung
 ```
 
-Daraus entsteht `docs/Anleitung-Maler.pdf` in der Gestalt der App:
-Markenfarben und Karten aus `src/index.css`, Schrift, Ränder, Briefkopf und
-Fußzeile aus `src/lib/pdf/design.json`. Das PDF ist ein Erzeugnis und wird nie
-von Hand bearbeitet — wer etwas ändern will, ändert das Markdown und baut neu.
+Das baut **alle** `docs/anleitung-*.md`; eine einzelne geht mit
+`tsx scripts/build-anleitung.ts docs/anleitung-buero.md`. Wohin das PDF gehört
+und was aufs Deckblatt kommt, steht im Frontmatter der Quelle (`pdf:`,
+`deckblatt_oben:`, `deckblatt_unten:`, `einleitung:`) — der Erzeuger kennt
+keine einzelne Anleitung, nur das Format. Eine neue Anleitung braucht deshalb
+keine Zeile Code.
+
+Die Gestalt kommt aus der App: Markenfarben und Karten aus `src/index.css`,
+Schrift, Ränder, Briefkopf und Fußzeile aus `src/lib/pdf/design.json`. Die PDFs
+sind Erzeugnisse und werden nie von Hand bearbeitet — wer etwas ändern will,
+ändert das Markdown und baut neu.
 
 Der Erzeuger versteht nur einen festen Ausschnitt von Markdown: Überschriften
 bis `###`, Absätze, Aufzählungen, nummerierte Schritte, Tabellen, Hinweise
 (`>`) sowie `**fett**` und `` `Begriff` ``. Alles andere geht als roher Text
 durch. Ein Hinweis, der mit **Wichtig** oder **Achtung** beginnt, wird gelb
-gesetzt, jeder andere in der Markenfarbe.
+gesetzt, jeder andere in der Markenfarbe. In einer Tabellenzelle wird nicht
+fett gesetzt — autoTable kennt nur einen Stil je Zelle, deshalb wird eine
+Hervorhebung dort zur Anführung.
 
 Ändert sich eine Regel in der App — Pausenfenster, Pflichtfelder,
-Abwesenheitscodes —, gehört die Anleitung mit in denselben Commit.
+Abwesenheitscodes —, gehören beide Anleitungen mit in denselben Commit.
 
 ### Version
 
@@ -291,7 +309,7 @@ supabase/
   migrations/  Datenbankschema, Sicherheitsregeln, Genehmigungslogik
   functions/   send-push (Deno) — läuft nicht im Browser und wird deshalb von
                der Typprüfung der App ausgenommen
-docs/          Anleitung als Markdown (gepflegt) und als PDF (erzeugt)
+docs/          Anleitungen als Markdown (gepflegt) und als PDF (erzeugt)
 scripts/       VAPID-Schlüssel erzeugen, PDF-Designer und Anleitung bauen
 ```
 

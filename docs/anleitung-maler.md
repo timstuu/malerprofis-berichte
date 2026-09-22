@@ -6,6 +6,9 @@ gilt_fuer: Alle Mitarbeiter mit der Rolle „Maler" (worker)
 sprache: de
 quelle: docs/anleitung-maler.md
 pdf: docs/Anleitung-Maler.pdf
+deckblatt_oben: Anleitung
+deckblatt_unten: für Maler
+einleitung: Wochenplanung, Wochenberichte, Abnahmeprotokolle, Urlaub und Auslagen — alles, was du in der App der Malerprofis Uderstadt brauchst.
 hinweis_fuer_ki: >
   Diese Datei ist die einzige Quelle der Anleitung. Das PDF wird daraus mit
   `npm run anleitung` erzeugt und nie von Hand bearbeitet. Jedes Kapitel (##)

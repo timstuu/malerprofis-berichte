@@ -1,11 +1,15 @@
 /**
- * Baut aus `docs/anleitung-maler.md` das PDF `docs/Anleitung-Maler.pdf`.
+ * Baut aus jeder `docs/anleitung-*.md` das zugehörige PDF.
  *
- *   npm run anleitung
+ *   npm run anleitung                          alle Anleitungen
+ *   tsx scripts/build-anleitung.ts docs/…md    nur diese eine
  *
- * Die Anleitung wird **nur** als Markdown gepflegt: Dort steht sie so, dass
- * eine KI sie ohne Umweg lesen kann, und hier bekommt sie die Gestalt der App.
- * Das PDF ist ein Erzeugnis und wird nie von Hand bearbeitet.
+ * Wohin das PDF geht und was aufs Deckblatt kommt, steht im Frontmatter der
+ * Quelle — der Erzeuger kennt keine einzelne Anleitung, nur das Format.
+ *
+ * Die Anleitungen werden **nur** als Markdown gepflegt: Dort stehen sie so,
+ * dass eine KI sie ohne Umweg lesen kann, und hier bekommen sie die Gestalt
+ * der App. Das PDF ist ein Erzeugnis und wird nie von Hand bearbeitet.
  *
  * Gestaltung: Aus `src/lib/pdf/design.json` kommen Schrift, Ränder, Briefkopf
  * und Fußzeile — das ist die Hauspost der Firma und gilt auch hier. Farben,
@@ -33,9 +37,6 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p: string) => fs.readFileSync(path.join(root, p), 'utf-8');
-
-const SOURCE = 'docs/anleitung-maler.md';
-const TARGET = 'docs/Anleitung-Maler.pdf';
 
 // ---------------------------------------------------------------------------
 // Farben und Maße der Oberfläche
@@ -88,15 +89,40 @@ type Block =
   | { type: 'table'; head: string[]; rows: string[][] };
 
 interface Manual {
-  title: string;
+  /** Die Angaben aus dem Frontmatter — sie bestimmen Deckblatt und Ziel. */
+  meta: Record<string, string>;
   blocks: Block[];
   chapters: { number: string; text: string }[];
 }
 
-function stripFrontmatter(markdown: string): string {
-  if (!markdown.startsWith('---')) return markdown;
+/**
+ * Trennt Frontmatter und Text.
+ *
+ * Gelesen werden nur einfache `schlüssel: wert`-Zeilen. Ein gefalteter Block
+ * (`schlüssel: >`) wird übersprungen — dort steht der Hinweis für die KI, den
+ * das PDF nicht braucht.
+ */
+function splitFrontmatter(markdown: string): { meta: Record<string, string>; body: string } {
+  if (!markdown.startsWith('---')) return { meta: {}, body: markdown };
+
   const end = markdown.indexOf('\n---', 3);
-  return end < 0 ? markdown : markdown.slice(markdown.indexOf('\n', end + 1) + 1);
+  if (end < 0) return { meta: {}, body: markdown };
+
+  const meta: Record<string, string> = {};
+  let folded = false;
+  for (const line of markdown.slice(4, end).split(/\r?\n/)) {
+    if (folded) {
+      // Eine eingerückte Zeile gehört noch zum gefalteten Block darüber.
+      if (/^\s/.test(line) || line.trim() === '') continue;
+      folded = false;
+    }
+    const m = /^([a-z_]+):\s*(.*)$/.exec(line);
+    if (!m) continue;
+    if (m[2] === '>' || m[2] === '|') folded = true;
+    else meta[m[1]] = m[2].trim();
+  }
+
+  return { meta, body: markdown.slice(markdown.indexOf('\n', end + 1) + 1) };
 }
 
 /**
@@ -116,9 +142,9 @@ function splitRow(line: string): string[] {
 }
 
 function parseManual(markdown: string): Manual {
-  const lines = stripFrontmatter(markdown).split(/\r?\n/);
+  const { meta, body } = splitFrontmatter(markdown);
+  const lines = body.split(/\r?\n/);
   const blocks: Block[] = [];
-  let title = '';
 
   // Was gerade gesammelt wird: ein Absatz, eine Liste oder ein Hinweis.
   let paragraph: string[] = [];
@@ -149,9 +175,10 @@ function parseManual(markdown: string): Manual {
       continue;
     }
 
+    // Die Überschrift des Dokuments steht schon im Frontmatter und auf dem
+    // Deckblatt — im Fließtext wird sie nicht noch einmal gesetzt.
     if (trimmed.startsWith('# ')) {
       flush();
-      title = trimmed.slice(2).trim();
       continue;
     }
 
@@ -221,7 +248,7 @@ function parseManual(markdown: string): Manual {
     .filter((b): b is Extract<Block, { type: 'chapter' }> => b.type === 'chapter')
     .map(({ number, text }) => ({ number, text }));
 
-  return { title, blocks, chapters };
+  return { meta, blocks, chapters };
 }
 
 // ---------------------------------------------------------------------------
@@ -604,15 +631,18 @@ function drawCover(
   doc.text(d.letterhead.company, left, d.letterhead.top);
   doc.text(d.letterhead.address, left, d.letterhead.top + d.letterhead.lineGap);
 
-  // Titelblock
-  let y = 78;
+  // Titelblock. Die Anleitung fürs Büro hat mehr Kapitel als die der Maler —
+  // damit das Inhaltsverzeichnis aufs Deckblatt passt, rückt der Titel dann
+  // nach oben statt die Liste auf eine zweite Seite zu schieben.
+  const roomy = manual.chapters.length <= 11;
+  let y = roomy ? 78 : 60;
   doc.setFont(font, 'bold');
   doc.setFontSize(30);
   doc.setTextColor(...rgb(UI.text));
-  doc.text('Anleitung', left, y);
+  doc.text(manual.meta.deckblatt_oben ?? 'Anleitung', left, y);
   y += 13;
   doc.setTextColor(...rgb(UI.accent1));
-  doc.text('für Maler', left, y);
+  doc.text(manual.meta.deckblatt_unten ?? '', left, y);
 
   y += 8;
   doc.setDrawColor(...rgb(UI.accent1));
@@ -623,18 +653,15 @@ function drawCover(
   doc.setFont(font, 'normal');
   doc.setFontSize(11);
   doc.setTextColor(...rgb(UI.muted));
-  const intro = doc.splitTextToSize(
-    'Wochenplanung, Wochenberichte, Abnahmeprotokolle, Urlaub und Auslagen — alles, was du in der App der Malerprofis Uderstadt brauchst.',
-    width - 40,
-  ) as string[];
+  const intro = doc.splitTextToSize(manual.meta.einleitung ?? '', width - 40) as string[];
   for (const line of intro) {
     doc.text(line, left, y);
     y += lineHeight(11);
   }
 
   // Inhalt als Karte, wie die Listen in der App
-  const rowHeight = 7.4;
-  const cardTop = y + 12;
+  const rowHeight = roomy ? 7.4 : 6.6;
+  const cardTop = y + (roomy ? 12 : 8);
   const cardHeight = manual.chapters.length * rowHeight + 2 * 6 + 7;
 
   doc.setDrawColor(...rgb(UI.cardBorder));
@@ -670,8 +697,11 @@ function drawCover(
   doc.text(`Version ${version} · Stand ${stand}`, left, PAGE_HEIGHT - 20);
 }
 
-/** Fußzeile auf allen Seiten außer der Titelseite. */
-function drawFooters(doc: jsPDF, version: string): void {
+/**
+ * Fußzeile auf allen Seiten außer der Titelseite. Gezählt wird ohne sie: Wer
+ * „Seite 7“ sagt, meint die siebte Seite mit Inhalt.
+ */
+function drawFooters(doc: jsPDF, title: string, version: string): void {
   const d = pdfDesign;
   const font = fontName(d);
   const pages = doc.getNumberOfPages();
@@ -681,7 +711,7 @@ function drawFooters(doc: jsPDF, version: string): void {
     doc.setFontSize(d.footer.fontSize);
     doc.setTextColor(...rgb(d.footer.color));
     const y = PAGE_HEIGHT - 10;
-    doc.text(`Anleitung für Maler · Version ${version}`, contentLeft(d), y);
+    doc.text(`${title} · Version ${version}`, contentLeft(d), y);
     doc.text(`Seite ${i - 1} von ${pages - 1}`, contentRight(d), y, { align: 'right' });
   }
 }
@@ -691,7 +721,6 @@ function drawFooters(doc: jsPDF, version: string): void {
 // ---------------------------------------------------------------------------
 
 const pkg = JSON.parse(read('package.json')) as { version: string };
-const manual = parseManual(read(SOURCE));
 
 // Arimo von der Platte statt über den `?inline`-Import der App — den kennt
 // nur der Bündler.
@@ -709,51 +738,74 @@ const logo = fs.existsSync(logoFile)
     })()
   : null;
 
-const doc = createPdf(pdfDesign);
-drawCover(doc, manual, logo, pkg.version);
-
-const renderer = new Renderer(doc);
-/** Der Einleitungssatz eines Kapitels steht frei, alles Weitere in Karten. */
-let afterChapter = false;
-
-for (const block of manual.blocks) {
-  switch (block.type) {
-    case 'chapter':
-      renderer.chapter(block.number, block.text);
-      afterChapter = true;
-      break;
-    case 'section':
-      renderer.section(block.text);
-      afterChapter = false;
-      break;
-    case 'p':
-      if (afterChapter) renderer.lead(block.text);
-      else renderer.body(block.text);
-      break;
-    case 'ul':
-      renderer.bullets(block.items);
-      break;
-    case 'ol':
-      renderer.steps(block.items);
-      break;
-    case 'callout':
-      renderer.callout(block.text);
-      break;
-    case 'table':
-      renderer.table(block.head, block.rows);
-      afterChapter = false;
-      break;
+/** Baut eine Anleitung und gibt zurück, wohin sie geschrieben wurde. */
+function buildManual(source: string): { target: string; pages: number; chapters: number } {
+  const manual = parseManual(read(source));
+  const target = manual.meta.pdf;
+  if (!target) {
+    throw new Error(`${source}: Im Frontmatter fehlt die Angabe „pdf:“ — ohne sie ist unklar, wohin das PDF gehört.`);
   }
+
+  const doc = createPdf(pdfDesign);
+  drawCover(doc, manual, logo, pkg.version);
+
+  const renderer = new Renderer(doc);
+  /** Der Einleitungssatz eines Kapitels steht frei, alles Weitere in Karten. */
+  let afterChapter = false;
+
+  for (const block of manual.blocks) {
+    switch (block.type) {
+      case 'chapter':
+        renderer.chapter(block.number, block.text);
+        afterChapter = true;
+        break;
+      case 'section':
+        renderer.section(block.text);
+        afterChapter = false;
+        break;
+      case 'p':
+        if (afterChapter) renderer.lead(block.text);
+        else renderer.body(block.text);
+        break;
+      case 'ul':
+        renderer.bullets(block.items);
+        break;
+      case 'ol':
+        renderer.steps(block.items);
+        break;
+      case 'callout':
+        renderer.callout(block.text);
+        break;
+      case 'table':
+        renderer.table(block.head, block.rows);
+        afterChapter = false;
+        break;
+    }
+  }
+
+  renderer.finish();
+  renderer.drawCardBorders();
+  drawFooters(doc, manual.meta.titel ?? 'Anleitung', pkg.version);
+
+  const file = path.join(root, target);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, Buffer.from(doc.output('arraybuffer')));
+
+  return { target, pages: doc.getNumberOfPages(), chapters: manual.chapters.length };
 }
 
-renderer.finish();
-renderer.drawCardBorders();
-drawFooters(doc, pkg.version);
+// Ohne Angabe alle Anleitungen — so bleibt keine zurück, wenn sich am
+// Erzeuger etwas ändert.
+const sources =
+  process.argv.slice(2).length > 0
+    ? process.argv.slice(2)
+    : fs
+        .readdirSync(path.join(root, 'docs'))
+        .filter((name) => /^anleitung-.*\.md$/.test(name))
+        .sort()
+        .map((name) => `docs/${name}`);
 
-const target = path.join(root, TARGET);
-fs.mkdirSync(path.dirname(target), { recursive: true });
-fs.writeFileSync(target, Buffer.from(doc.output('arraybuffer')));
-
-console.log(
-  `${TARGET} geschrieben — ${doc.getNumberOfPages()} Seiten, ${manual.chapters.length} Kapitel.`,
-);
+for (const source of sources) {
+  const { target, pages, chapters } = buildManual(source);
+  console.log(`${target} geschrieben — ${pages} Seiten, ${chapters} Kapitel.`);
+}
