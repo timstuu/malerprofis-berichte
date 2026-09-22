@@ -6,8 +6,8 @@
     "marginRight": 15
   },
   "letterhead": {
-    "company": "Malermeister Uderstadt GmbH",
-    "address": "Luisenweg 7, 20537 Hamburg",
+    "company": "malerprofis - Feines Handwerk",
+    "address": "Malermeister Uderstadt GmbH, Luisenweg 7, 20537 Hamburg",
     "fontSize": 8,
     "bold": false,
     "color": "#504e51",
@@ -44,8 +44,8 @@
     "headFill": "#2980b9",
     "headText": "#ffffff",
     "headBold": true,
-    "footFill": "#2980b9",
-    "footText": "#ffffff",
+    "footFill": "#ffffff",
+    "footText": "#000000",
     "zebra": true,
     "zebraFill": "#f5f5f5",
     "lines": "horizontal",
