@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Plus, Trash2, Pencil, Loader2 } from 'lucide-react';
+import { Plus, Pencil, Loader2, Archive, ArchiveRestore, ChevronDown } from 'lucide-react';
 import { supabase } from '../../lib/supabase.ts';
-import { setSiteTotalHours } from '../../lib/data.ts';
+import { fetchArchivedSites, setSiteTotalHours } from '../../lib/data.ts';
 import UserManagement from './UserManagement.tsx';
 import WeeklyReportsAdmin from './WeeklyReportsAdmin.tsx';
 import AbnahmeProtocolsAdmin from './AbnahmeProtocolsAdmin.tsx';
@@ -39,6 +39,9 @@ export default function AdminPanel({
   const [newAddress, setNewAddress] = useState('');
   const [newCustomer, setNewCustomer] = useState('');
   const [newHours, setNewHours] = useState('');
+  /** null = noch nie geladen. Das Archiv holt sich erst, wer danach fragt. */
+  const [archived, setArchived] = useState<Site[] | null>(null);
+  const [showArchive, setShowArchive] = useState(false);
 
   const run = async (action: () => Promise<{ error: { message: string } | null }>) => {
     setBusy(true);
@@ -137,12 +140,46 @@ export default function AdminPanel({
   };
 
   /**
-   * Baustellen werden deaktiviert statt gelöscht — an ihnen hängen
+   * Baustellen werden archiviert statt gelöscht — an ihnen hängen
    * Berichtszeilen vergangener Wochen, die erhalten bleiben müssen.
+   *
+   * Archiviert heißt: raus aus allen Auswahlfeldern, raus aus der Leiste der
+   * Wochenplanung, aber jederzeit zurückholbar. Alte Berichte zeigen die
+   * Baustelle unverändert.
    */
-  const deactivateSite = async (site: Site) => {
-    if (!confirm(`"${site.number} – ${site.address}" wirklich ausblenden?`)) return;
-    await run(async () => supabase.from('sites').update({ active: false }).eq('id', site.id));
+  const setSiteActive = async (site: Site, active: boolean) => {
+    if (
+      !active &&
+      !confirm(
+        `"${site.number} – ${site.address}" archivieren?\n\n` +
+          'Sie verschwindet aus allen Auswahlfeldern. Alte Berichte bleiben ' +
+          'unverändert, und zurückholen lässt sie sich jederzeit über das Archiv.',
+      )
+    ) {
+      return;
+    }
+    await run(async () => supabase.from('sites').update({ active }).eq('id', site.id));
+    // Das Archiv hängt an einer eigenen Abfrage und erfährt von der Änderung
+    // sonst nichts.
+    if (archived !== null) setArchived(await fetchArchivedSites());
+  };
+
+  const toggleArchive = async () => {
+    if (showArchive) {
+      setShowArchive(false);
+      return;
+    }
+    setShowArchive(true);
+    if (archived === null) {
+      setBusy(true);
+      setError(null);
+      try {
+        setArchived(await fetchArchivedSites());
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+      setBusy(false);
+    }
   };
 
   return (
@@ -264,11 +301,11 @@ export default function AdminPanel({
                     <Pencil size={16} />
                   </button>
                   <button
-                    onClick={() => deactivateSite(site)}
-                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl cursor-pointer"
-                    title="Ausblenden"
+                    onClick={() => setSiteActive(site, false)}
+                    className="p-2 text-gray-400 hover:text-[#141414] hover:bg-gray-50 rounded-xl cursor-pointer"
+                    title="Archivieren"
                   >
-                    <Trash2 size={16} />
+                    <Archive size={16} />
                   </button>
                 </div>
               )}
@@ -276,6 +313,64 @@ export default function AdminPanel({
           ))}
           {sites.length === 0 && (
             <div className="p-8 text-center text-[#141414]/30 text-sm">Noch keine Baustellen.</div>
+          )}
+        </div>
+
+        {/* Das Archiv liegt zugeklappt darunter: In der Liste oben soll stehen,
+            was gerade läuft. Ohne diesen Weg wäre eine archivierte Baustelle
+            nirgends mehr zu sehen und nicht zurückzuholen — fetchSites() lädt
+            nur die aktiven. */}
+        <div className="bg-white rounded-3xl shadow-sm border border-[#141414]/5 overflow-hidden">
+          <button
+            onClick={toggleArchive}
+            className="w-full p-4 flex items-center gap-2 text-sm font-bold text-gray-500 hover:text-[#141414] hover:bg-gray-50 cursor-pointer"
+          >
+            <Archive size={16} />
+            Archiv
+            {archived !== null && (
+              <span className="text-xs font-normal text-[#141414]/40">
+                ({archived.length})
+              </span>
+            )}
+            <ChevronDown
+              size={16}
+              className={`ml-auto transition-transform ${showArchive ? 'rotate-180' : ''}`}
+            />
+          </button>
+
+          {showArchive && (
+            <div className="border-t border-[#141414]/5">
+              {archived?.map((site) => (
+                <div
+                  key={site.id}
+                  className="p-4 flex items-center justify-between border-b border-[#141414]/5 last:border-none"
+                >
+                  <div className="flex-1 min-w-0 mr-4">
+                    <p className="font-semibold text-sm text-gray-500 truncate">
+                      <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded text-xs font-mono mr-2">
+                        {site.number}
+                      </span>
+                      {site.address}
+                    </p>
+                    {site.customer && (
+                      <p className="text-xs text-gray-400 mt-0.5">{site.customer}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setSiteActive(site, true)}
+                    disabled={busy}
+                    className="flex items-center gap-1.5 text-xs font-bold text-gray-500 hover:text-[#141414] bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-xl disabled:opacity-60 cursor-pointer"
+                  >
+                    <ArchiveRestore size={14} /> Zurückholen
+                  </button>
+                </div>
+              ))}
+              {archived?.length === 0 && (
+                <div className="p-8 text-center text-[#141414]/30 text-sm">
+                  Keine archivierten Baustellen.
+                </div>
+              )}
+            </div>
           )}
         </div>
       </section>

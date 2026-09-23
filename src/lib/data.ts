@@ -85,6 +85,18 @@ export async function fetchSites(): Promise<Site[]> {
 }
 
 /**
+ * Die archivierten Baustellen. Bewusst eine eigene Abfrage: Überall sonst soll
+ * nur stehen, was aktiv ist — geladen wird das Archiv erst, wenn jemand in der
+ * Verwaltung danach fragt.
+ */
+export async function fetchArchivedSites(): Promise<Site[]> {
+  return unwrap<Site[]>(
+    await supabase.from('sites').select('*').eq('active', false).order('number'),
+    'Archivierte Baustellen',
+  );
+}
+
+/**
  * Verplante Stunden je Baustelle, über alle Zeiten — Vergangenheit wie Zukunft.
  *
  * Gerechnet wird in der Datenbank (Sicht `site_planned_hours`, 0017). Im

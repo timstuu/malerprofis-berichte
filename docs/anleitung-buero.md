@@ -73,7 +73,7 @@ gebraucht wird, steht also zuerst.
 | Auslagen prüfen und monatlich abschließen | Verwaltung → Auslagen |
 | Urlaub genehmigen oder ablehnen | Verwaltung → Urlaubsanträge |
 | Resturlaub korrigieren | Verwaltung → Benutzer → Palmensymbol |
-| Baustellen anlegen und ausblenden | Verwaltung → Baustellen |
+| Baustellen anlegen und archivieren | Verwaltung → Baustellen |
 | Konten anlegen, Rollen vergeben, Passwörter setzen | Verwaltung → Benutzer |
 | Krankmeldung eintragen | Wochenplanung, Code 050-7 |
 
@@ -480,7 +480,7 @@ Das Feld **Std. gesamt** ist freiwillig: Es sind die Stunden, die für die
 Baustelle veranschlagt sind. Leer heißt, die Baustelle taucht in der Leiste der
 Wochenplanung nicht auf.
 
-### Ändern und ausblenden
+### Ändern und archivieren
 
 Der **Stift** fragt nacheinander nach Nummer und Adresse.
 
@@ -493,17 +493,31 @@ Wochenplanung; sie bleibt ansonsten unverändert nutzbar.
 > oder über „+ Einsatz" eingetragen. Was die Maler später in ihren
 > Wochenberichten abgeben, ändert die Zahl nicht.
 
-Der **Mülleimer** blendet die Baustelle aus — er löscht sie nicht.
+Der **Archivkasten** legt die Baustelle ins Archiv — er löscht sie nicht.
 
-> **Das ist Absicht:** An einer Baustelle hängen Berichtszeilen vergangener
+Archiviert heißt: Sie verschwindet aus allen Auswahlfeldern, aus der Leiste der
+Wochenplanung und aus der Liste hier oben. Ist die Baustelle abgeschlossen,
+gehört sie dorthin — so steht in der Liste nur, was gerade läuft.
+
+> **Gelöscht wird nie:** An einer Baustelle hängen Berichtszeilen vergangener
 > Wochen. Würde sie verschwinden, wären alte Berichte unvollständig. Eine
-> ausgeblendete Baustelle wird nur nicht mehr vorgeschlagen.
+> archivierte Baustelle wird nur nicht mehr vorgeschlagen; in alten Berichten
+> steht sie unverändert.
 
-### Die Abwesenheitscodes
+### Das Archiv
 
-Die Zeilen `040-7` bis `073-7` haben **keine Knöpfe**. Ihre Nummern stecken
-fest im Code der Planung und im Urlaubskonto — sie zu ändern oder auszublenden
-würde beides zerreißen.
+Unter der Liste liegt **Archiv** — antippen, und die archivierten Baustellen
+klappen auf. **Zurückholen** macht eine davon wieder aktiv: Sie steht sofort
+wieder in allen Auswahlfeldern, mitsamt ihren Gesamtstunden.
+
+### Die festen Baustellen
+
+Die Zeilen `001-7` und `040-7` bis `073-7` haben **keine Knöpfe** und kein
+Stundenfeld. Ihre Nummern stecken fest im Code der Planung, im Wochenbericht
+und im Urlaubskonto — sie zu ändern oder zu archivieren würde das zerreißen.
+
+`001-7 Büroarbeit` ist die Nummer, auf die dein eigener Wochenbericht die
+hinterlegten Standardzeiten bucht (Kapitel 11).
 
 ## 10. Benutzer verwalten
 
@@ -725,6 +739,6 @@ Home-Bildschirm" installierten App.
 - **Entsperren verwirft die Unterschrift** — der Maler muss neu abgeben.
 - **Abgeschlossen wird nur bei Rest 0,00 €.**
 - **Der Abrechnungsmonat ist nicht der Belegmonat.**
-- **Baustellen werden ausgeblendet, nicht gelöscht.**
+- **Baustellen werden archiviert, nicht gelöscht.**
 - **Mitarbeiter werden deaktiviert, nicht gelöscht.**
 - **Das Passwort steht genau einmal da.**

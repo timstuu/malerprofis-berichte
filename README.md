@@ -46,6 +46,12 @@ Daten liegt vollständig in den Row-Level-Security-Regeln der Datenbank.
      Fehlt sie, erscheint die Baustellen-Leiste im Bearbeitungsmodus einfach
      nicht, und das Stundenfeld in der Verwaltung meldet beim Speichern, dass
      die Migration noch aussteht; der Rest der App läuft weiter
+   - `0018_office_site_absence_code.sql` — legt `001-7 Büroarbeit` an, falls sie
+     fehlt, und kennzeichnet sie wie die übrigen festen Baustellen. Stellt
+     außerdem sicher, dass feste Baustellen keine Gesamtstunden tragen. Braucht
+     `0017_site_total_hours.sql`. Fehlt sie, steht `001-7` weiter als normale
+     Baustelle in der Liste — mit Knöpfen, Stundenfeld und als Vorauswahl im
+     Einsatzformular
 3. Unter **Project Settings → API** die Projekt-URL und den `anon`-Key notieren.
 
 ### 2. Zugangsdaten hinterlegen
