@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "2.16.0",
+  "version": "2.17.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,7 @@
     "lint": "tsc --noEmit",
     "pdf-designer": "node scripts/build-pdf-designer.mjs",
     "anleitung": "tsx scripts/build-anleitung.ts",
-    "test": "tsx src/lib/prefill.test.ts && tsx src/lib/leave.test.ts && tsx src/lib/hours.test.ts && tsx src/lib/expenses.test.ts && node supabase/functions/send-push/logic.test.mjs",
+    "test": "tsx src/lib/prefill.test.ts && tsx src/lib/leave.test.ts && tsx src/lib/hours.test.ts && tsx src/lib/site-hours.test.ts && tsx src/lib/expenses.test.ts && node supabase/functions/send-push/logic.test.mjs",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",
     "version:major": "npm version major --no-git-tag-version"

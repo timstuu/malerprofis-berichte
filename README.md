@@ -41,6 +41,11 @@ Daten liegt vollständig in den Row-Level-Security-Regeln der Datenbank.
      Braucht `0014_expenses.sql`
    - `0016_expense_entertainment.sql` — Angaben zu Bewirtungsbelegen
      (bewirtete Personen, Anlass, Unterschrift). Braucht `0014_expenses.sql`
+   - `0017_site_total_hours.sql` — geplante Gesamtstunden je Baustelle und die
+     Sicht `site_planned_hours`, aus der die Wochenplanung den Rest errechnet.
+     Fehlt sie, erscheint die Baustellen-Leiste im Bearbeitungsmodus einfach
+     nicht, und das Stundenfeld in der Verwaltung meldet beim Speichern, dass
+     die Migration noch aussteht; der Rest der App läuft weiter
 3. Unter **Project Settings → API** die Projekt-URL und den `anon`-Key notieren.
 
 ### 2. Zugangsdaten hinterlegen
@@ -226,7 +231,7 @@ npm run dev
 | `npm run dev` | Entwicklungsserver (Vite) |
 | `npm run build` | Produktionsbuild nach `dist/` |
 | `npm run lint` | Typprüfung (`tsc --noEmit`) |
-| `npm run test` | Prüft die Übernahme der Planung und die Urlaubsberechnung |
+| `npm run test` | Prüft die Übernahme der Planung, die Urlaubsberechnung und die Stundenkontingente der Baustellen |
 | `npm run anleitung` | Baut die Anleitungen als PDF (siehe unten) |
 | `npm run version:patch` | Version erhöhen — `:minor` und `:major` ebenso |
 

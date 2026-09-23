@@ -84,6 +84,52 @@ export async function fetchSites(): Promise<Site[]> {
   );
 }
 
+/**
+ * Verplante Stunden je Baustelle, über alle Zeiten — Vergangenheit wie Zukunft.
+ *
+ * Gerechnet wird in der Datenbank (Sicht `site_planned_hours`, 0017). Im
+ * Browser ginge das nur, indem man jede Einsatzzeile der Firmengeschichte
+ * herunterlädt; die Planung lädt sonst immer nur sechs Tage.
+ *
+ * Fehlt die Sicht noch, gibt es eben keine Leiste — wie bei Hinweisen und
+ * Gewerken darf die Minute zwischen Deployment und von Hand eingespielter
+ * Migration keine rote Fehlermeldung auf dem Planungsschirm erzeugen.
+ */
+export async function fetchPlannedHoursPerSite(): Promise<Map<string, number>> {
+  const { data, error } = await supabase
+    .from('site_planned_hours')
+    .select('site_id, planned_hours');
+
+  if (error) {
+    if (isMissingTable(error, 'site_planned_hours')) return new Map();
+    throw new Error(`Verplante Stunden konnten nicht geladen werden: ${error.message}`);
+  }
+
+  // numeric kommt je nach Treiberfassung als Zeichenkette.
+  return new Map(
+    (data ?? []).map((row) => [String(row.site_id), Number(row.planned_hours)] as const),
+  );
+}
+
+const MISSING_SITE_HOURS =
+  'Die Gesamtstunden der Baustellen sind in der Datenbank noch nicht angelegt. Bitte einmalig ' +
+  'supabase/migrations/0017_site_total_hours.sql im Supabase-SQL-Editor ausführen.';
+
+/**
+ * Veranschlagte Gesamtstunden einer Baustelle setzen. `null` löscht die
+ * Vorgabe — die Baustelle verschwindet dann aus der Leiste der Wochenplanung.
+ */
+export async function setSiteTotalHours(id: string, hours: number | null): Promise<void> {
+  const { error } = await supabase.from('sites').update({ total_hours: hours }).eq('id', id);
+  if (error) {
+    throw new Error(
+      isMissingColumn(error, 'total_hours')
+        ? MISSING_SITE_HOURS
+        : `Gesamtstunden konnten nicht gespeichert werden: ${error.message}`,
+    );
+  }
+}
+
 export async function fetchHolidays(from: string, to: string): Promise<Holiday[]> {
   return unwrap<Holiday[]>(
     await supabase.from('holidays').select('*').gte('date', from).lte('date', to).order('date'),
@@ -202,6 +248,18 @@ function isMissingTable(error: { code?: string; message: string }, table: string
     error.code === '42P01' || // Postgres: relation does not exist
     error.code === 'PGRST205' || // PostgREST: nicht im Schema-Cache
     error.message.includes(table)
+  );
+}
+
+/**
+ * Dasselbe für eine fehlende Spalte. Betrifft nur das Schreiben — beim Lesen
+ * mit select('*') fällt eine fehlende Spalte gar nicht erst auf.
+ */
+function isMissingColumn(error: { code?: string; message: string }, column: string): boolean {
+  return (
+    error.code === '42703' || // Postgres: column does not exist
+    error.code === 'PGRST204' || // PostgREST: nicht im Schema-Cache
+    error.message.includes(column)
   );
 }
 

@@ -194,6 +194,29 @@ angezeigt.
 > Soll-Stunden herauskommen: 8,5 Stunden von Montag bis Donnerstag, 6 Stunden
 > am Freitag.
 
+### Ganze Arbeitstage aus der Leiste ziehen
+
+Für den Regelfall — ein Maler, ein ganzer Tag, eine Baustelle — geht es
+schneller. Sobald du auf **Bearbeiten** getippt hast, erscheint **unter dem
+Raster eine Leiste**: je Baustelle eine Spalte, darunter ein Stapel Blöcke.
+
+Einen Block auf die Zelle ziehen, in der der Einsatz stehen soll — fertig. Die
+Uhrzeiten setzt die App aus dem Wochentag, auf dem der Block landet: Montag bis
+Donnerstag `07:00–16:30`, Freitag `07:00–13:30`.
+
+**Der Stapel ist das, was noch übrig ist.** Über jeder Spalte steht der Rest in
+Stunden, und darunter liegen so viele Blöcke, wie das an ganzen Tagen ergibt.
+Jeder gezogene Block verschwindet aus dem Stapel; löschst du den Einsatz wieder,
+kommt er zurück.
+
+In der Leiste stehen **nur Baustellen, für die du Gesamtstunden hinterlegt
+hast** (Verwaltung → Baustellen). Ist der Rest aufgebraucht, verschwindet die
+Spalte.
+
+> **Planen kannst du trotzdem weiter.** Die Leiste ist eine Abkürzung, keine
+> Schranke. Halbe Tage, andere Uhrzeiten, Krank- und Urlaubscodes und alles, was
+> über das Kontingent hinausgeht, läuft wie bisher über **„+ Einsatz"**.
+
 ### Eine Kachel ändern, ziehen, kopieren, löschen
 
 | Was | Wie |
@@ -453,9 +476,22 @@ Adresse sind Pflicht.
 Die Nummer ist der Schlüssel, an dem im Wochenbericht die Adresse hängt und
 umgekehrt. Es lohnt sich, beim Schema zu bleiben (`080-7`).
 
+Das Feld **Std. gesamt** ist freiwillig: Es sind die Stunden, die für die
+Baustelle veranschlagt sind. Leer heißt, die Baustelle taucht in der Leiste der
+Wochenplanung nicht auf.
+
 ### Ändern und ausblenden
 
 Der **Stift** fragt nacheinander nach Nummer und Adresse.
+
+Das **Stundenfeld** in der Zeile lässt sich direkt ändern — eintippen, woanders
+hintippen, gespeichert. Leeren nimmt die Baustelle aus der Leiste der
+Wochenplanung; sie bleibt ansonsten unverändert nutzbar.
+
+> **Was von den Stunden abgezogen wird:** alles, was in der Wochenplanung auf
+> dieser Baustelle steht — vergangene und künftige Wochen, egal ob per Block
+> oder über „+ Einsatz" eingetragen. Was die Maler später in ihren
+> Wochenberichten abgeben, ändert die Zahl nicht.
 
 Der **Mülleimer** blendet die Baustelle aus — er löscht sie nicht.
 

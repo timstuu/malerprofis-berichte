@@ -29,6 +29,22 @@ export interface Site {
   customer: string | null;
   is_absence_code: boolean;
   active: boolean;
+  /**
+   * Veranschlagte Gesamtstunden. null heißt „nicht hinterlegt" — dann erscheint
+   * die Baustelle nicht in der Leiste der Wochenplanung. 0 verbietet die
+   * Datenbank (0017): „nichts hinterlegt" und „nichts mehr übrig" dürfen nicht
+   * dasselbe sein. Vor der Migration fehlt das Feld ganz, deshalb optional.
+   */
+  total_hours?: number | null;
+}
+
+/**
+ * Eine Zeile der Sicht public.site_planned_hours (0017): verplante Stunden je
+ * Baustelle über alle Zeiten.
+ */
+export interface SitePlannedHours {
+  site_id: string;
+  planned_hours: number;
 }
 
 export interface Assignment {

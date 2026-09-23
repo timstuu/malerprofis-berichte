@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Plus, Trash2, Pencil, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase.ts';
+import { setSiteTotalHours } from '../../lib/data.ts';
 import UserManagement from './UserManagement.tsx';
 import WeeklyReportsAdmin from './WeeklyReportsAdmin.tsx';
 import AbnahmeProtocolsAdmin from './AbnahmeProtocolsAdmin.tsx';
@@ -37,6 +38,7 @@ export default function AdminPanel({
   const [newNumber, setNewNumber] = useState('');
   const [newAddress, setNewAddress] = useState('');
   const [newCustomer, setNewCustomer] = useState('');
+  const [newHours, setNewHours] = useState('');
 
   const run = async (action: () => Promise<{ error: { message: string } | null }>) => {
     setBusy(true);
@@ -50,9 +52,44 @@ export default function AdminPanel({
     setBusy(false);
   };
 
+  /**
+   * Zwilling zu run() für die Funktionen aus data.ts: Die werfen, statt ein
+   * { error } zurückzugeben.
+   */
+  const runSafe = async (action: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+    setBusy(false);
+  };
+
+  /**
+   * Stundenzahl aus einem Eingabefeld. Leer heißt null — die Baustelle taucht
+   * dann nicht in der Leiste der Wochenplanung auf. Komma wird zu Punkt: Wer
+   * 8,5 tippt, meint 8.5.
+   */
+  const parseHours = (raw: string): number | null | 'ungültig' => {
+    const text = raw.trim().replace(',', '.');
+    if (!text) return null;
+    const value = Number(text);
+    return Number.isFinite(value) && value > 0 ? value : 'ungültig';
+  };
+
+  const INVALID_HOURS = 'Bitte eine Stundenzahl größer als 0 angeben oder das Feld leeren.';
+
   const addSite = async () => {
     if (!newNumber.trim() || !newAddress.trim()) {
       setError('Bitte Nummer und Adresse angeben.');
+      return;
+    }
+    const hours = parseHours(newHours);
+    if (hours === 'ungültig') {
+      setError(INVALID_HOURS);
       return;
     }
     await run(async () =>
@@ -60,11 +97,30 @@ export default function AdminPanel({
         number: newNumber.trim(),
         address: newAddress.trim(),
         customer: newCustomer.trim() || null,
+        // Nur mitschicken, wenn wirklich etwas eingetippt wurde: Sonst
+        // scheiterte das Anlegen einer Baustelle daran, dass 0017 noch nicht
+        // eingespielt ist.
+        ...(hours !== null && { total_hours: hours }),
       }),
     );
     setNewNumber('');
     setNewAddress('');
     setNewCustomer('');
+    setNewHours('');
+  };
+
+  /**
+   * Gesamtstunden ändern sich öfter als Nummer und Adresse — deshalb ein Feld
+   * in der Zeile und keine dritte prompt()-Frage.
+   */
+  const saveSiteHours = async (site: Site, raw: string) => {
+    const hours = parseHours(raw);
+    if (hours === 'ungültig') {
+      setError(INVALID_HOURS);
+      return;
+    }
+    if (hours === (site.total_hours ?? null)) return;
+    await runSafe(() => setSiteTotalHours(site.id, hours));
   };
 
   const editSite = async (site: Site) => {
@@ -147,6 +203,14 @@ export default function AdminPanel({
               placeholder="Kunde (optional)"
               className="p-3 bg-gray-100 rounded-xl text-sm sm:w-48"
             />
+            <input
+              value={newHours}
+              onChange={(e) => setNewHours(e.target.value)}
+              placeholder="Std. gesamt"
+              inputMode="decimal"
+              title="Veranschlagte Gesamtstunden. Leer lassen, wenn die Baustelle nicht in der Leiste der Wochenplanung erscheinen soll."
+              className="p-3 bg-gray-100 rounded-xl text-sm text-right sm:w-32"
+            />
             <button
               onClick={addSite}
               disabled={busy}
@@ -177,6 +241,21 @@ export default function AdminPanel({
                   deshalb keine Knöpfe — die Zeile bleibt einfach ruhig. */}
               {!site.is_absence_code && (
                 <div className="flex items-center gap-1">
+                  {/* Der Schlüssel enthält den gespeicherten Wert, damit das
+                      Feld nach dem Speichern den Stand aus der Datenbank
+                      zeigt — dasselbe Mittel wie beim Umbenennen einer
+                      Gewerkzeile in der Wochenplanung. */}
+                  <input
+                    key={`${site.id}-${site.total_hours ?? ''}`}
+                    defaultValue={site.total_hours ?? ''}
+                    onBlur={(e) => saveSiteHours(site, e.target.value)}
+                    disabled={busy}
+                    placeholder="Std."
+                    inputMode="decimal"
+                    aria-label={`Gesamtstunden ${site.number}`}
+                    title="Veranschlagte Gesamtstunden. Leer heißt: taucht in der Leiste der Wochenplanung nicht auf."
+                    className="w-24 p-2 mr-1 bg-gray-100 rounded-xl text-sm text-right disabled:opacity-60"
+                  />
                   <button
                     onClick={() => editSite(site)}
                     className="p-2 text-gray-500 hover:text-brand-accent1 hover:bg-gray-50 rounded-xl cursor-pointer"

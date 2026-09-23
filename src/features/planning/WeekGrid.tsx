@@ -25,6 +25,7 @@ import {
   fetchAssignments,
   fetchHolidays,
   fetchApprovedVacations,
+  fetchPlannedHoursPerSite,
   fetchTradeEntries,
   fetchTradeRows,
   fetchWeekNotes,
@@ -45,6 +46,13 @@ import {
   updateAssignmentNote,
 } from '../../lib/planning.ts';
 import { WEEKDAYS, breakMinutesForDate, defaultShiftFor, weekdayOf } from '../../lib/hours.ts';
+import {
+  blockShiftFor,
+  formatHours,
+  supplyColumns,
+  supplyLabel,
+  type SupplyColumn,
+} from '../../lib/site-hours.ts';
 import { sortEmployees } from '../../lib/users.ts';
 import { colorOf } from '../../lib/colors.ts';
 import FullscreenPlan from './FullscreenPlan.tsx';
@@ -134,10 +142,36 @@ export default function WeekGrid({
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   /**
-   * Rechtecke aller Zellen, gesammelt beim Rendern. Beim Loslassen einer Kachel
-   * entscheidet der Zeigerpunkt, in welcher Zelle sie gelandet ist — anders als
-   * bei den Ziehereignissen des Browsers funktioniert das auch mit dem Finger.
+   * Verplante Stunden je Baustelle, über alle Zeiten. Hängt an load() und ist
+   * dadurch nach jedem Eingriff aktuell — auch nach dem Löschen eines
+   * Einsatzes, wenn ein Block in die Leiste zurückwandert.
    */
+  const [plannedBySite, setPlannedBySite] = useState<Map<string, number>>(new Map());
+
+  /**
+   * Der Block, der gerade am Finger hängt. Die Leiste scrollt waagerecht und
+   * der Stapel senkrecht — beides schneidet ab, und ein Block muss den ganzen
+   * Weg hinauf ins Raster. Deshalb wird er beim Ziehen durchsichtig geschaltet
+   * und stattdessen ein freies Abbild an dieser Stelle gezeichnet.
+   */
+  const [dragBlock, setDragBlock] = useState<{
+    column: SupplyColumn;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  /**
+   * Die Zellen des Rasters. Beim Loslassen einer Kachel entscheidet der
+   * Zeigerpunkt, in welcher Zelle sie gelandet ist — anders als bei den
+   * Ziehereignissen des Browsers funktioniert das auch mit dem Finger.
+   *
+   * Gemerkt werden die Knoten, gemessen wird erst beim Aufnehmen einer Kachel
+   * (measureCells): Ein Rechteck, das beim Rendern entstanden ist, zeigt nach
+   * dem nächsten Scrollen irgendwohin. Das Raster scrollt quer, die
+   * Baustellen-Leiste darunter scrollt ebenfalls, und React rendert dabei
+   * nicht neu — der Einsatz landete sonst in der falschen Zelle.
+   */
+  const cellNodes = useRef(new Map<string, HTMLDivElement>());
   const cellRects = useRef(new Map<string, DOMRect>());
 
   const readOnly = !canEdit || !editMode;
@@ -219,14 +253,20 @@ export default function WeekGrid({
     try {
       const from = format(weekStart, 'yyyy-MM-dd');
       const to = format(weekEnd, 'yyyy-MM-dd');
-      const [assign, weekNotes, rows, entries, holidayList, leaveList] = await Promise.all([
-        fetchAssignments(from, to),
-        fetchWeekNotes(from, to),
-        fetchTradeRows(from),
-        fetchTradeEntries(from, to),
-        fetchHolidays(from, to),
-        fetchApprovedVacations(from, to),
-      ]);
+      const [assign, weekNotes, rows, entries, holidayList, leaveList, planned] =
+        await Promise.all([
+          fetchAssignments(from, to),
+          fetchWeekNotes(from, to),
+          fetchTradeRows(from),
+          fetchTradeEntries(from, to),
+          fetchHolidays(from, to),
+          fetchApprovedVacations(from, to),
+          // Nicht auf die Woche begrenzt: Das Kontingent einer Baustelle gilt
+          // über alle Zeiten. Jeder Schreibweg dieser Datei endet in load(),
+          // deshalb genügt diese eine Stelle, damit der Rest überall stimmt.
+          fetchPlannedHoursPerSite(),
+        ]);
+      setPlannedBySite(planned);
       setAssignments(assign);
       setHolidays(holidayList);
       setLeaves(leaveList);
@@ -328,6 +368,39 @@ export default function WeekGrid({
     try {
       await deleteAssignment(assignment.id);
       markPlanChanged(assignment.employee_id);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  /**
+   * Legt einen ganzen Arbeitstag auf die getroffene Zelle.
+   *
+   * Uhrzeiten und Pause kommen aus dem Wochentag des Ziels, nicht aus dem
+   * Block: Derselbe Block wird montags zu 8,5 und freitags zu 6,0 Stunden.
+   *
+   * Liegt in der Zelle schon ein Einsatz, kommt der neue daneben —
+   * Überschneidungen sind erlaubt und werden hier bewusst nicht geprüft, genau
+   * wie beim Formular. Wer einen halben Tag braucht, nimmt „+ Einsatz".
+   */
+  const dropBlock = async (siteId: string, x: number, y: number) => {
+    const target = cellAt(x, y);
+    if (!target) return; // daneben losgelassen — nichts passiert
+    const shift = blockShiftFor(target.date);
+    try {
+      await createAssignments([
+        {
+          employee_id: target.employeeId,
+          site_id: siteId,
+          date: target.date,
+          start_time: shift.start,
+          end_time: shift.end,
+          break_minutes: shift.breakMinutes,
+          note: null,
+        },
+      ]);
+      markPlanChanged(target.employeeId);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -454,10 +527,24 @@ export default function WeekGrid({
     }
   };
 
-  /** Merkt sich die Lage einer Zelle, solange sie im Dokument steht. */
+  /** Merkt sich eine Zelle, solange sie im Dokument steht. */
   const registerCell = (key: string) => (node: HTMLDivElement | null) => {
-    if (node) cellRects.current.set(key, node.getBoundingClientRect());
-    else cellRects.current.delete(key);
+    if (node) cellNodes.current.set(key, node);
+    else cellNodes.current.delete(key);
+  };
+
+  /**
+   * Einmal je Ziehvorgang die Lage aller Zellen nachschlagen.
+   *
+   * Nicht pro Zugbild: Bei zwölf Malern und sechs Tagen wären das 72
+   * getBoundingClientRect() in jedem Einzelbild, also ein erzwungenes Layout je
+   * Frame. Während ein Finger auf einer Kachel liegt, wird nicht gescrollt.
+   */
+  const measureCells = () => {
+    cellRects.current.clear();
+    for (const [key, node] of cellNodes.current) {
+      cellRects.current.set(key, node.getBoundingClientRect());
+    }
   };
 
   /** In welcher Zelle liegt dieser Bildschirmpunkt? */
@@ -477,11 +564,20 @@ export default function WeekGrid({
    * Uhrzeiten und Pause, eine Gewerkkachel eine Notiz — beim Wechsel ginge das
    * eine verloren und das andere müsste erfunden werden.
    */
+  const tradeNodes = useRef(new Map<string, HTMLDivElement>());
   const tradeRects = useRef(new Map<string, DOMRect>());
 
   const registerTradeCell = (key: string) => (node: HTMLDivElement | null) => {
-    if (node) tradeRects.current.set(key, node.getBoundingClientRect());
-    else tradeRects.current.delete(key);
+    if (node) tradeNodes.current.set(key, node);
+    else tradeNodes.current.delete(key);
+  };
+
+  /** Wie measureCells, für die Gewerkzeilen. */
+  const measureTradeCells = () => {
+    tradeRects.current.clear();
+    for (const [key, node] of tradeNodes.current) {
+      tradeRects.current.set(key, node.getBoundingClientRect());
+    }
   };
 
   const tradeCellAt = (x: number, y: number): { rowId: string; date: string } | null => {
@@ -493,6 +589,8 @@ export default function WeekGrid({
     }
     return null;
   };
+
+  const supply = supplyColumns(sites, plannedBySite);
 
   const gridTemplate = `${nameWidth}px repeat(${days.length}, minmax(8.5rem, 1fr))`;
 
@@ -611,6 +709,7 @@ export default function WeekGrid({
       {!readOnly && (
         <p className="text-xs text-[#141414]/40">
           Kacheln lassen sich auf andere Tage und Mitarbeiter ziehen.
+          {supply.length > 0 && ' Aus der Leiste unten zieht man ganze Arbeitstage ins Raster.'}
         </p>
       )}
 
@@ -772,7 +871,10 @@ export default function WeekGrid({
                             color={color}
                             readOnly={readOnly}
                             isDragging={draggingId === a.id}
-                            onDragStart={() => setDraggingId(a.id)}
+                            onDragStart={() => {
+                              measureCells();
+                              setDraggingId(a.id);
+                            }}
                             onDragMove={(x, y) => {
                               const target = cellAt(x, y);
                               setDropTarget(target ? `${target.employeeId}|${target.date}` : null);
@@ -897,6 +999,7 @@ export default function WeekGrid({
                           entry={entry}
                           readOnly={readOnly}
                           onEdit={() => setEditTradeId(entry.id)}
+                          onDragStart={measureTradeCells}
                           onDragMove={(x, y) => {
                             const target = tradeCellAt(x, y);
                             setDropTarget(target ? `${target.rowId}|${target.date}` : null);
@@ -981,7 +1084,124 @@ export default function WeekGrid({
           </div>
         )}
       </div>
+
+      {/* Die Leiste steht außerhalb der Rasterkarte: Sie scrollt für sich, das
+          Raster für sich. Im Lesemodus gibt es sie nicht — sie ist ein
+          Werkzeug, keine Auskunft. */}
+      {!readOnly && supply.length > 0 && (
+        <div className="bg-white rounded-3xl shadow-sm border border-[#141414]/5 p-3 overflow-x-auto">
+          <div className="flex gap-3 min-w-max">
+            {supply.map((column) => (
+              <SiteSupplyColumn
+                key={column.site.id}
+                column={column}
+                dragging={dragBlock?.column.site.id === column.site.id}
+                onDragStart={(x, y) => {
+                  measureCells();
+                  setDragBlock({ column, x, y });
+                }}
+                onDragMove={(x, y) => {
+                  setDragBlock((d) => (d ? { ...d, x, y } : d));
+                  const target = cellAt(x, y);
+                  setDropTarget(target ? `${target.employeeId}|${target.date}` : null);
+                }}
+                onDragEnd={(x, y) => {
+                  setDragBlock(null);
+                  setDropTarget(null);
+                  dropBlock(column.site.id, x, y);
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Das Abbild des gezogenen Blocks, außerhalb jeder Überlaufgrenze.
+          motion/react liefert info.point in Bildschirmkoordinaten — derselbe
+          Punkt, mit dem cellAt seit jeher die Zelle bestimmt. */}
+      {dragBlock && (
+        <div
+          className="fixed z-[60] pointer-events-none w-48 -translate-x-1/2 -translate-y-1/2 rounded-xl px-2 py-1.5 border border-brand-accent1/40 bg-white shadow-lg"
+          style={{ left: dragBlock.x, top: dragBlock.y }}
+        >
+          <BlockBody column={dragBlock.column} />
+        </div>
+      )}
     </div>
+  );
+}
+
+/**
+ * Eine Baustelle in der Leiste: Kopf mit dem Rest, darunter der Stapel.
+ *
+ * Die Anzahl der Blöcke ist der Rest — geteilt durch einen Regeltag, aufgerundet.
+ * So sieht man ohne Rechnen, wie viele Manntage noch drin sind. Ist nichts mehr
+ * übrig, fällt die ganze Spalte weg (supplyColumns); weiterplanen lässt sich
+ * die Baustelle dann über „+ Einsatz".
+ */
+function SiteSupplyColumn({
+  column,
+  dragging,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+}: {
+  column: SupplyColumn;
+  dragging: boolean;
+  onDragStart: (x: number, y: number) => void;
+  onDragMove: (x: number, y: number) => void;
+  onDragEnd: (x: number, y: number) => void;
+}) {
+  return (
+    <div className="w-48 shrink-0">
+      <div className="px-2 pb-2 border-b border-[#141414]/5">
+        <p className="font-bold text-xs font-mono truncate" title={column.site.address}>
+          {column.site.number}
+        </p>
+        <p className="text-[11px] text-[#141414]/60 truncate">{column.site.address}</p>
+        <p className="text-[11px] font-bold text-brand-accent1">
+          noch {formatHours(column.remaining)} Std
+        </p>
+      </div>
+
+      {/* pr-5 gehört dem Scroll-Container und nicht den Blöcken: Die tragen
+          touch-none, sonst ließe sich der Stapel mit dem Finger nicht mehr
+          scrollen, sobald er voll ist. */}
+      <div className="mt-2 max-h-56 overflow-y-auto pr-5 space-y-1.5">
+        {Array.from({ length: column.blocks }, (_, i) => (
+          <motion.div
+            key={i}
+            drag
+            dragSnapToOrigin
+            dragMomentum={false}
+            dragElastic={0}
+            onDragStart={(_, info) => onDragStart(info.point.x, info.point.y)}
+            onDrag={(_, info) => onDragMove(info.point.x, info.point.y)}
+            onDragEnd={(_, info) => onDragEnd(info.point.x, info.point.y)}
+            whileDrag={{ cursor: 'grabbing' }}
+            // Der oberste Block ist der, den man anfasst; die darunter zeigen
+            // nur, wie viel noch da ist. Während des Ziehens verschwindet er,
+            // weil das Abbild seine Rolle übernimmt.
+            style={{ opacity: dragging && i === 0 ? 0 : 1 }}
+            title={supplyLabel(column.site, column.remaining)}
+            className="rounded-xl px-2 py-1.5 border border-[#141414]/10 bg-gray-50 hover:bg-white hover:border-brand-accent1/40 cursor-grab touch-none select-none"
+          >
+            <BlockBody column={column} />
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Beschriftung eines Blocks — dieselbe im Stapel und im gezogenen Abbild. */
+function BlockBody({ column }: { column: SupplyColumn }) {
+  return (
+    <>
+      <p className="font-bold text-[11px] font-mono truncate">{column.site.number}</p>
+      <p className="text-[10px] text-[#141414]/60 truncate">{column.site.address}</p>
+      <p className="text-[10px] text-[#141414]/40">noch {formatHours(column.remaining)} Std</p>
+    </>
   );
 }
 
@@ -1183,6 +1403,7 @@ function TradeTile({
   entry,
   readOnly,
   onEdit,
+  onDragStart,
   onDragMove,
   onDragEnd,
   onDelete,
@@ -1191,6 +1412,7 @@ function TradeTile({
   entry: TradeEntryRow;
   readOnly: boolean;
   onEdit: () => void;
+  onDragStart: () => void;
   onDragMove: (x: number, y: number) => void;
   onDragEnd: (x: number, y: number) => void;
   onDelete: () => void;
@@ -1218,6 +1440,7 @@ function TradeTile({
       dragSnapToOrigin
       dragMomentum={false}
       dragElastic={0}
+      onDragStart={onDragStart}
       onDrag={(_, info) => onDragMove(info.point.x, info.point.y)}
       onDragEnd={(_, info) => onDragEnd(info.point.x, info.point.y)}
       whileDrag={{ scale: 1.04, zIndex: 50, cursor: 'grabbing' }}
